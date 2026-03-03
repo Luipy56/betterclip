@@ -1,0 +1,3 @@
+# betterClip - system clipboard uses wl-clipboard/xsel (apt packages)
+# X11 monitoring requires python-xlib (apt: python3-xlib)
+python-xlib>=0.33

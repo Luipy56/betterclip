@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "betterclip"
+version = "0.1.0"
+description = "Clipboard manager for Linux (Wayland/X11) - Windows+V style"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "betterClip" }]
+
+[project.scripts]
+betterclip = "betterclip.__main__:main"
+betterclip-show = "betterclip.picker:main_show"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["betterclip*"]
