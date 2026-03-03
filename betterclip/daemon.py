@@ -9,7 +9,7 @@ import subprocess
 import sys
 import threading
 
-from .utils import SUBPROCESS_TIMEOUT, X11_CLIPBOARD_TOOLS, X11_PRIMARY_TOOLS, find_executable, find_x11_tool
+from .utils import SUBPROCESS_TIMEOUT, X11_CLIPBOARD_TOOLS, find_executable, find_x11_tool
 
 
 def _on_new_clipboard_text(text: str) -> None:
@@ -94,30 +94,25 @@ def _x11_run_watcher() -> None:
         sys.stderr.write("betterclip: XFixes extension not available.\n")
         sys.exit(1)
 
-    # Resolve tools once (cached for all clipboard events)
+    # Only monitor CLIPBOARD (Ctrl+C, right-click Copy). Skip PRIMARY (mouse selection)
+    # to avoid partial/incremental text as user drags to select.
     clip_tool = find_x11_tool(X11_CLIPBOARD_TOOLS)
-    prim_tool = find_x11_tool(X11_PRIMARY_TOOLS)
-    if not clip_tool and not prim_tool:
+    if not clip_tool:
         sys.stderr.write("betterclip: xsel/xclip not found. Install xsel.\n")
         sys.exit(1)
 
     root = disp.screen().root
     atom_clipboard = disp.get_atom("CLIPBOARD")
-    atom_primary = disp.get_atom("PRIMARY")
     mask = xfixes.XFixesSetSelectionOwnerNotifyMask
 
     disp.xfixes_select_selection_input(root, atom_clipboard, mask)
-    disp.xfixes_select_selection_input(root, atom_primary, mask)
 
     # query_extension works on both dist-packages and pypi python-xlib
     ext_reply = disp.query_extension("XFIXES")
     sel_notify_type = ext_reply.first_event + xfixes.XFixesSelectionNotify
 
-    def read_selection(selection_atom) -> str | None:
-        tool = clip_tool if selection_atom == atom_clipboard else prim_tool
-        if not tool:
-            return None
-        path, read_args, _ = tool
+    def read_clipboard() -> str | None:
+        path, read_args, _ = clip_tool
         try:
             r = subprocess.run(
                 [path] + read_args,
@@ -135,9 +130,9 @@ def _x11_run_watcher() -> None:
             ev = disp.next_event()
         except Exception:
             break
-        if ev.type != sel_notify_type:
+        if ev.type != sel_notify_type or ev.selection != atom_clipboard:
             continue
-        text = read_selection(ev.selection)
+        text = read_clipboard()
         if text:
             _on_new_clipboard_text(text)
 
@@ -152,15 +147,11 @@ def run_daemon() -> None:
         pass  # Signals only work in main thread
 
     if is_wayland():
-        procs = [
-            p
-            for primary in (False, True)
-            if (p := _wayland_run_watcher(primary)) is not None
-        ]
-        if not procs:
+        # Only watch CLIPBOARD (Ctrl+C, right-click Copy), not PRIMARY (mouse selection)
+        p = _wayland_run_watcher(primary=False)
+        if p is None:
             sys.stderr.write("betterclip: wl-paste not found. Install wl-clipboard.\n")
             sys.exit(1)
-        for p in procs:
-            p.wait()
+        p.wait()
     else:
         _x11_run_watcher()

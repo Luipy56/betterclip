@@ -1,10 +1,10 @@
-# betterClip
+# betterclip
 
 Clipboard manager for Linux (Wayland/X11), Windows+V style.
 
 ## Features
 
-- **Automatic capture**: Records text copied with Ctrl+C, Ctrl+Shift+C or mouse selection.
+- **Automatic capture**: Records text when you copy (Ctrl+C, Ctrl+Shift+C, right-click → Copy). Mouse selection is not recorded to avoid duplicate or partial entries.
 - **Configurable history**: Stores up to N items (default 50).
 - **Picker with shortcut**: Super+V opens the history in rofi to choose what to paste.
 - **Compatibility**: Wayland (Ubuntu 24.04 default) and X11.
@@ -68,8 +68,8 @@ On **GNOME/Ubuntu**:
 
 1. Open *Settings* → *Keyboard* → *Custom shortcuts*
 2. Click *+* to add
-3. Name: `betterClip`
-4. Command: `betterclip show` (or `python3 -m betterclip show` if not installed)
+3. Name: `betterclip`
+4. Command: `betterclip show` (or full path `~/.local/bin/betterclip show` if needed)
 5. Shortcut: Super+V (or Ctrl+Alt+V if Super+V is taken)
 
 ### 4. Workflow
@@ -102,7 +102,7 @@ File `~/.config/betterclip/config.json`:
 ## Tests
 
 ```bash
-cd betterClip
+cd /path/to/betterclip
 PYTHONPATH=. python3 -m unittest discover -v
 ```
 
@@ -110,4 +110,5 @@ Runs 16 tests covering config, storage, clipboard, picker, utils and daemon.
 
 ## License
 
-MIT
+MIT. You can use and modify this code freely as long as you give credit.  
+Author: [ldeluipy.es](https://ldeluipy.es)
