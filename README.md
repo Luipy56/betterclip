@@ -87,12 +87,14 @@ File `~/.config/betterclip/config.json`:
 ```json
 {
   "max_items": 50,
-  "hotkey": "Super+V"
+  "hotkey": "Super+V",
+  "cli_mode": false
 }
 ```
 
 - `max_items`: Maximum number of items in history (default: 50).
 - `hotkey`: Documentation only; the shortcut is configured in the system.
+- `cli_mode`: If `true`, `betterclip show` uses a terminal picker (numbered list + stdin) instead of rofi, and prints the selected text to stdout. Use on servers or over SSH where there is no display; you can pipe the output (e.g. `betterclip show | xclip -i -b` on a machine with X11).
 
 ## Data structure
 

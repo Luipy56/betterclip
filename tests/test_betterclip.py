@@ -29,6 +29,7 @@ class TestConfig(unittest.TestCase):
         cfg = load_config()
         self.assertEqual(cfg["max_items"], 50)
         self.assertEqual(cfg["hotkey"], "Super+V")
+        self.assertFalse(cfg["cli_mode"])
 
     def test_load_config_from_file(self):
         from betterclip.config import get_config_path, load_config
@@ -62,6 +63,18 @@ class TestConfig(unittest.TestCase):
         cfg2 = load_config(use_cache=True)
         self.assertEqual(cfg1["max_items"], 10)
         self.assertEqual(cfg2["max_items"], 10)
+
+    def test_load_config_cli_mode(self):
+        from betterclip.config import get_config_path, load_config
+
+        path = get_config_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"cli_mode": true}', encoding="utf-8")
+        cfg = load_config(use_cache=False)
+        self.assertTrue(cfg["cli_mode"])
+        path.write_text('{"cli_mode": "true"}', encoding="utf-8")
+        cfg = load_config(use_cache=False)
+        self.assertTrue(cfg["cli_mode"])
 
 
 class TestStorage(unittest.TestCase):
@@ -219,6 +232,21 @@ class TestPicker(unittest.TestCase):
             with patch("subprocess.Popen", return_value=mock_proc):
                 result = show_picker()
         self.assertEqual(result, "second item")
+
+    def test_show_picker_cli_mode_returns_selection(self):
+        """When cli_mode is True, selection comes from stdin (no rofi)."""
+        from io import StringIO
+
+        from betterclip.picker import show_picker
+        from betterclip.storage import add_entry
+
+        add_entry("first")
+        add_entry("second")
+
+        with patch("betterclip.picker.load_config", return_value={"cli_mode": True}):
+            with patch("sys.stdin", StringIO("1\n")):
+                result = show_picker()
+        self.assertEqual(result, "first")
 
 
 if __name__ == "__main__":

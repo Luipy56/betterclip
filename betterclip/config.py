@@ -10,6 +10,7 @@ MAX_ITEMS_LIMIT = 1000
 DEFAULT_CONFIG = {
     "max_items": DEFAULT_MAX_ITEMS,
     "hotkey": "Super+V",
+    "cli_mode": False,
 }
 
 # Cache: (config, mtime) to avoid repeated file reads in daemon
@@ -70,6 +71,15 @@ def load_config(*, use_cache: bool = True) -> dict:
         config["max_items"] = max(1, min(mi, MAX_ITEMS_LIMIT)) if mi > 0 else DEFAULT_MAX_ITEMS
     except (TypeError, ValueError):
         config["max_items"] = DEFAULT_MAX_ITEMS
+
+    # Normalize cli_mode to bool (desktop=False, cli=True)
+    cm = config.get("cli_mode", False)
+    if isinstance(cm, bool):
+        config["cli_mode"] = cm
+    elif isinstance(cm, str):
+        config["cli_mode"] = cm.lower() in ("true", "1", "yes")
+    else:
+        config["cli_mode"] = bool(cm)
 
     _config_cache = (config, mtime)
     return config.copy()
