@@ -9,7 +9,13 @@ description = "Clipboard manager for Linux (Wayland/X11) - Windows+V style"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "ldeluipy.es", url = "https://ldeluipy.es" }]
+authors = [{ name = "ldeluipy.es" }]
+dependencies = [
+    "python-xlib>=0.33",
+]
+
+[project.urls]
+Homepage = "https://ldeluipy.es"
 
 [project.scripts]
 betterclip = "betterclip.__main__:main"

@@ -4,10 +4,13 @@ After=graphical-session.target
 
 [Service]
 Type=simple
+# Use the venv Python from your clone (PEP 668 blocks system pip install).
+# Example: ExecStart=/home/you/Repos/betterclip/.venv/bin/python -m betterclip daemon
 ExecStart=/usr/bin/python3 -m betterclip daemon
 Restart=on-failure
 RestartSec=2
 Environment=XDG_RUNTIME_DIR=%t
+PassEnvironment=WAYLAND_DISPLAY XDG_SESSION_TYPE DISPLAY
 
 [Install]
 WantedBy=default.target

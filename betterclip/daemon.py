@@ -8,6 +8,7 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 
 from .utils import SUBPROCESS_TIMEOUT, X11_CLIPBOARD_TOOLS, find_executable, find_x11_tool
 
@@ -18,6 +19,56 @@ def _on_new_clipboard_text(text: str) -> None:
     text = text.strip()
     if text:
         add_entry(text)
+
+
+def _wayland_wlroots_watch_supported(wl: str) -> bool:
+    """
+    wl-paste --watch needs the wlr data-control protocol.
+    GNOME/Mutter does not support it; use X11/XWayland or slow polling instead.
+    """
+    try:
+        p = subprocess.Popen(
+            [wl, "--watch", "true"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            p.wait(timeout=0.6)
+        except subprocess.TimeoutExpired:
+            p.terminate()
+            try:
+                p.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait()
+            return True
+        return False
+    except OSError:
+        return False
+
+
+def _wayland_poll_forever() -> None:
+    """
+    Last-resort: poll wl-paste. Avoid on GNOME — each run can flash an icon in the dock.
+    Prefer X11/XWayland when DISPLAY is set (see run_daemon).
+    """
+    from .clipboard import read_clipboard
+
+    sys.stderr.write(
+        "betterclip: wl-paste polling (slow interval to limit dock noise). "
+        "Prefer setting DISPLAY for XWayland + XFixes.\n"
+    )
+    sys.stderr.flush()
+    last: str | None = None
+    while True:
+        time.sleep(2.0)
+        text = read_clipboard()
+        if text is None:
+            continue
+        if text == last:
+            continue
+        last = text
+        _on_new_clipboard_text(text)
 
 
 def _wayland_run_watcher(primary: bool) -> subprocess.Popen | None:
@@ -147,11 +198,41 @@ def run_daemon() -> None:
         pass  # Signals only work in main thread
 
     if is_wayland():
-        # Only watch CLIPBOARD (Ctrl+C, right-click Copy), not PRIMARY (mouse selection)
-        p = _wayland_run_watcher(primary=False)
-        if p is None:
+        wl = find_executable("wl-paste")
+        if not wl:
             sys.stderr.write("betterclip: wl-paste not found. Install wl-clipboard.\n")
             sys.exit(1)
-        p.wait()
+        # Only watch CLIPBOARD (Ctrl+C, right-click Copy), not PRIMARY (mouse selection)
+        if _wayland_wlroots_watch_supported(wl):
+            p = _wayland_run_watcher(primary=False)
+            if p is None:
+                sys.stderr.write("betterclip: wl-paste not found. Install wl-clipboard.\n")
+                sys.exit(1)
+            p.wait()
+        else:
+            # GNOME/Mutter: no wl-paste --watch. Polling wl-paste spawns processes that flicker
+            # in the GNOME dock. Mutter syncs CLIPBOARD to XWayland — use XFixes like native X11.
+            if os.environ.get("DISPLAY", "").strip():
+                sys.stderr.write(
+                    "betterclip: Wayland without wl-paste --watch; using XFixes on XWayland.\n"
+                )
+                sys.stderr.flush()
+                try:
+                    _x11_run_watcher()
+                except SystemExit:
+                    raise
+                except BaseException as exc:
+                    sys.stderr.write(
+                        f"betterclip: X11 monitor failed ({exc!r}); falling back to wl-paste polling.\n"
+                    )
+                    sys.stderr.flush()
+                    _wayland_poll_forever()
+            else:
+                sys.stderr.write(
+                    "betterclip: no DISPLAY (XWayland unavailable). "
+                    "Add PassEnvironment=DISPLAY to the systemd user unit.\n"
+                )
+                sys.stderr.flush()
+                _wayland_poll_forever()
     else:
         _x11_run_watcher()

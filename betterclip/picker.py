@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 import sys
 
-from .clipboard import get_write_tool
+from .clipboard import get_write_tool, is_wayland
 from .config import load_config
 from .storage import get_history_reversed
 from .utils import PICKER_MAX_LINES, PICKER_TRUNCATE_LEN, ROFI_TIMEOUT, find_executable
@@ -69,15 +69,23 @@ def show_picker(max_lines: int = PICKER_MAX_LINES) -> str | None:
 
     lines = [f"{i}\t{_truncate(ent.get('text', ''))}" for i, ent in enumerate(history)]
 
+    # GNOME Wayland + global shortcut: rofi runs on XWayland without keyboard focus
+    # until you click. -steal-focus fixes that (rofi default is -no-steal-focus).
+    rofi_args = [
+        rofi,
+        "-dmenu",
+        "-steal-focus",
+        "-p", "Portapapeles (Super+V)",
+        "-l", str(min(max_lines, len(lines))),
+        "-i",
+    ]
+    # Experimental: behave as a normal window; helps some Mutter focus edge cases.
+    if is_wayland():
+        rofi_args.insert(2, "-normal-window")
+
     try:
         proc = subprocess.Popen(
-            [
-                rofi,
-                "-dmenu",
-                "-p", "Portapapeles (Super+V)",
-                "-l", str(min(max_lines, len(lines))),
-                "-i",
-            ],
+            rofi_args,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
