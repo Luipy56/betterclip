@@ -1,0 +1,75 @@
+/**
+ * betterclip — Modern Mac (light, rounded, blue accent)
+ */
+* {
+    font: "system-ui 13";
+    /* Opaque surfaces reduce Mutter/XWayland flicker vs full transparency */
+    background-color: #f5f5f7;
+    text-color: #1d1d1f;
+}
+
+window {
+    width: 42%;
+    border-radius: 14px;
+    background-color: #f5f5f7;
+    border: 1px dash 0px 0px;
+    border-color: #d2d2d7;
+    padding: 14px;
+}
+
+mainbox {
+    children: [inputbar, listview];
+    spacing: 10px;
+}
+
+inputbar {
+    padding: 10px 14px;
+    border-radius: 10px;
+    background-color: #ffffff;
+    border: 1px dash 0px 0px;
+    border-color: #e5e5ea;
+    children: [prompt, entry];
+}
+
+prompt {
+    padding: 0 10px 0 0;
+    text-color: #86868b;
+}
+
+entry {
+    placeholder: "";
+    placeholder-color: #aeaeb2;
+}
+
+listview {
+    columns: 1;
+    lines: 12;
+    spacing: 6px;
+    /* Scrollbar + wheel both drive selection in rofi; disabling avoids buggy coupling (see davatorium/rofi#2236). */
+    scrollbar: false;
+    /* Stable height avoids resize/repaint loops while filtering (Wayland/XWayland). */
+    fixed-height: true;
+}
+
+element {
+    padding: 10px 14px;
+    border-radius: 10px;
+    spacing: 0px;
+}
+
+element normal.normal {
+    background-color: transparent;
+}
+
+element alternate.normal {
+    background-color: transparent;
+}
+
+element selected.normal {
+    background-color: #007aff;
+    text-color: #ffffff;
+}
+
+element-text {
+    highlight: bold rgb(255, 255, 255);
+}

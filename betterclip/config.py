@@ -5,12 +5,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .rofi_theme import DEFAULT_THEME, THEMES
+
 DEFAULT_MAX_ITEMS = 50
 MAX_ITEMS_LIMIT = 1000
 DEFAULT_CONFIG = {
     "max_items": DEFAULT_MAX_ITEMS,
     "hotkey": "Super+V",
     "cli_mode": False,
+    # Rofi picker appearance. Allowed values:
+    #   classic     — default rofi look (current behavior)
+    #   modern_mac  — light “Modern Mac” style (bundled .rasi)
+    "theme": DEFAULT_THEME,
 }
 
 # Cache: (config, mtime) to avoid repeated file reads in daemon
@@ -80,6 +86,13 @@ def load_config(*, use_cache: bool = True) -> dict:
         config["cli_mode"] = cm.lower() in ("true", "1", "yes")
     else:
         config["cli_mode"] = bool(cm)
+
+    raw_theme = config.get("theme", DEFAULT_THEME)
+    if isinstance(raw_theme, str):
+        tid = raw_theme.strip().lower().replace(" ", "_").replace("-", "_")
+        config["theme"] = tid if tid in THEMES else DEFAULT_THEME
+    else:
+        config["theme"] = DEFAULT_THEME
 
     _config_cache = (config, mtime)
     return config.copy()

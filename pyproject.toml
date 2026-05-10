@@ -24,3 +24,6 @@ betterclip-show = "betterclip.picker:main_show"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["betterclip*"]
+
+[tool.setuptools.package-data]
+betterclip = ["themes/*.rasi"]

@@ -1,0 +1,17 @@
+---
+description: Never add Co-authored-by or tool/agent branding to commits or output
+alwaysApply: true
+---
+
+# No Co-authored-by or agent branding
+
+Never add `Co-authored-by:` or any Cursor, cursor-agent, or agent branding to git commits or any output. No advertising, ever.
+
+## Commits
+
+- Do not add `Co-authored-by:` (or similar attribution trailers) to commit messages.
+- Do not credit or name Cursor, Cursor Agent, or other assistants in commits.
+
+## Other output
+
+- Do not inject tool, IDE, or assistant branding into user-facing text, docs, or generated content unless the user explicitly asked for it.

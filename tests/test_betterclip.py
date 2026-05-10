@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -30,6 +31,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg["max_items"], 50)
         self.assertEqual(cfg["hotkey"], "Super+V")
         self.assertFalse(cfg["cli_mode"])
+        self.assertEqual(cfg["theme"], "classic")
 
     def test_load_config_from_file(self):
         from betterclip.config import get_config_path, load_config
@@ -63,6 +65,24 @@ class TestConfig(unittest.TestCase):
         cfg2 = load_config(use_cache=True)
         self.assertEqual(cfg1["max_items"], 10)
         self.assertEqual(cfg2["max_items"], 10)
+
+    def test_load_config_unknown_theme_defaults_to_classic(self):
+        from betterclip.config import get_config_path, load_config
+
+        path = get_config_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"theme": "does_not_exist"}', encoding="utf-8")
+        cfg = load_config(use_cache=False)
+        self.assertEqual(cfg["theme"], "classic")
+
+    def test_load_config_theme_modern_mac_normalized(self):
+        from betterclip.config import get_config_path, load_config
+
+        path = get_config_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"theme": "modern-mac"}', encoding="utf-8")
+        cfg = load_config(use_cache=False)
+        self.assertEqual(cfg["theme"], "modern_mac")
 
     def test_load_config_cli_mode(self):
         from betterclip.config import get_config_path, load_config
@@ -233,6 +253,30 @@ class TestPicker(unittest.TestCase):
                 result = show_picker()
         self.assertEqual(result, "second item")
 
+    def test_show_picker_modern_mac_passes_theme_file(self):
+        """modern_mac theme adds -theme pointing at bundled modern_mac.rasi."""
+        from unittest.mock import MagicMock
+
+        from betterclip.picker import show_picker
+        from betterclip.rofi_theme import _THEMES_DIR
+        from betterclip.storage import add_entry
+
+        add_entry("only")
+
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("0\tonly", None)
+
+        with patch("betterclip.picker.find_executable", return_value="/usr/bin/rofi"):
+            with patch("betterclip.picker.load_config", return_value={"cli_mode": False, "theme": "modern_mac"}):
+                with patch("subprocess.Popen", return_value=mock_proc) as popen_mock:
+                    show_picker()
+        argv = popen_mock.call_args[0][0]
+        self.assertIn("-theme", argv)
+        theme_idx = argv.index("-theme")
+        self.assertTrue(str(argv[theme_idx + 1]).endswith("modern_mac.rasi"))
+        self.assertEqual(Path(argv[theme_idx + 1]), _THEMES_DIR / "modern_mac.rasi")
+        self.assertEqual(argv[argv.index("-scroll-method") + 1], "0")
+
     def test_show_picker_cli_mode_returns_selection(self):
         """When cli_mode is True, selection comes from stdin (no rofi)."""
         from io import StringIO
@@ -247,6 +291,66 @@ class TestPicker(unittest.TestCase):
             with patch("sys.stdin", StringIO("1\n")):
                 result = show_picker()
         self.assertEqual(result, "first")
+
+
+class TestRofiThemeAsset(unittest.TestCase):
+    """Rofi .rasi guardrails (parser quirks differ from CSS)."""
+
+    def _modern_mac_path(self) -> Path:
+        repo_root = Path(__file__).resolve().parent.parent
+        return repo_root / "betterclip" / "themes" / "modern_mac.rasi"
+
+    def test_modern_mac_rasi_avoids_hex_inside_border_shorthand(self):
+        """rofi 1.7 fails on `#hex` inside `border: … #…` shorthand."""
+        path = self._modern_mac_path()
+        self.assertTrue(path.is_file(), msg=f"missing {path}")
+        text = path.read_text(encoding="utf-8")
+        if re.search(r"\bborder\s*:\s*[^;\n]*#", text):
+            self.fail(
+                "Avoid #colors inside `border:` shorthand in .rasi; use `border: …` plus "
+                "a separate `border-color:` line (rofi parser limitation)."
+            )
+
+    def test_modern_mac_rasi_no_css_border_style_property(self):
+        """rofi rasi is not CSS: `border-style:` / `solid` are rejected by the parser."""
+        path = self._modern_mac_path()
+        text = path.read_text(encoding="utf-8")
+        if re.search(r"\bborder-style\s*:", text):
+            self.fail(
+                "Do not use `border-style:` in .rasi; use rofi border syntax like "
+                "`border: 1px dash 0px 0px;` with `border-color:`."
+            )
+
+    def test_modern_mac_rasi_rofi_parses_when_display_available(self):
+        """Optional: launch rofi briefly — parse errors exit immediately with stderr."""
+        import shutil
+        import subprocess
+
+        rofi = shutil.which("rofi")
+        if not rofi:
+            self.skipTest("rofi not in PATH")
+        if not os.environ.get("DISPLAY"):
+            self.skipTest("no DISPLAY")
+
+        path = self._modern_mac_path()
+        proc = subprocess.Popen(
+            [rofi, "-no-config", "-dmenu", "-theme", str(path.resolve())],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=os.environ,
+        )
+        try:
+            out, err = proc.communicate(timeout=0.4)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            out, err = proc.communicate(timeout=2)
+        combined = (err or "") + (out or "")
+
+        self.assertNotIn("Error while parsing", combined)
+        self.assertNotIn("syntax error", combined.lower())
+        self.assertNotIn("parser error", combined.lower())
 
 
 if __name__ == "__main__":

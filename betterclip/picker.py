@@ -7,6 +7,7 @@ import sys
 
 from .clipboard import get_write_tool, is_wayland
 from .config import load_config
+from .rofi_theme import DEFAULT_THEME, rofi_scroll_method_args, rofi_theme_args
 from .storage import get_history_reversed
 from .utils import PICKER_MAX_LINES, PICKER_TRUNCATE_LEN, ROFI_TIMEOUT, find_executable
 
@@ -69,19 +70,25 @@ def show_picker(max_lines: int = PICKER_MAX_LINES) -> str | None:
 
     lines = [f"{i}\t{_truncate(ent.get('text', ''))}" for i, ent in enumerate(history)]
 
+    theme = config.get("theme", DEFAULT_THEME)
+    rofi_args = [rofi, "-dmenu", *rofi_theme_args(theme), *rofi_scroll_method_args(theme)]
+    # Experimental: behave as a normal window; helps some Mutter focus edge cases.
+    # modern_mac uses a heavy rounded theme; -normal-window on XWayland often causes
+    # scroll/focus glitches and transient unmap — keep classic behavior for that theme.
+    if is_wayland() and theme != "modern_mac":
+        rofi_args.append("-normal-window")
     # GNOME Wayland + global shortcut: rofi runs on XWayland without keyboard focus
     # until you click. -steal-focus fixes that (rofi default is -no-steal-focus).
-    rofi_args = [
-        rofi,
-        "-dmenu",
-        "-steal-focus",
-        "-p", "Portapapeles (Super+V)",
-        "-l", str(min(max_lines, len(lines))),
-        "-i",
-    ]
-    # Experimental: behave as a normal window; helps some Mutter focus edge cases.
-    if is_wayland():
-        rofi_args.insert(2, "-normal-window")
+    rofi_args.extend(
+        [
+            "-steal-focus",
+            "-p",
+            "Portapapeles (Super+V)",
+            "-l",
+            str(min(max_lines, len(lines))),
+            "-i",
+        ]
+    )
 
     try:
         proc = subprocess.Popen(

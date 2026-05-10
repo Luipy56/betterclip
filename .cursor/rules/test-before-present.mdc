@@ -1,0 +1,27 @@
+---
+description: Always run minimum verification before marking work complete or presenting to the user
+alwaysApply: true
+---
+
+# Test before presenting
+
+Do **not** describe implementation as finished or hand results to the user until you have run at least the checks below that apply to the change.
+
+## Python project (betterclip)
+
+From the repo root:
+
+```bash
+PYTHONPATH=. python3 -m unittest discover -v
+```
+
+Fix any failures before responding. If you only touched one area, you may run the narrowest matching tests first, then still run the full suite unless the user asked for a quicker iteration.
+
+## External artifacts (rofi themes, configs, scripts)
+
+- If you added or edited files consumed by another tool (e.g. **`.rasi`** for rofi), add or update **automated checks** when feasible (pattern tests, subprocess smoke tests, or documented commands).
+- For rofi themes: at minimum avoid known parser traps (e.g. **no `#hex` color inside a `border:` shorthand** in rasi; use `border-width` / `border-color` / `border-style` instead) and keep tests that guard those rules.
+
+## Rationale
+
+Shipping without running tests or asset checks passes avoidable errors (syntax, regressions) to the user. A short test run is part of the deliverable, not optional polish.

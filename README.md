@@ -62,6 +62,8 @@ systemctl --user enable betterclip
 systemctl --user start betterclip
 ```
 
+Keep the `PassEnvironment` / `Environment` lines from the sample unit so the daemon inherits `DISPLAY` and `WAYLAND_DISPLAY` (see [docs/troubleshooting.md](docs/troubleshooting.md)).
+
 ### 3. Super+V shortcut
 
 On **GNOME/Ubuntu**:
@@ -88,13 +90,15 @@ File `~/.config/betterclip/config.json`:
 {
   "max_items": 50,
   "hotkey": "Super+V",
-  "cli_mode": false
+  "cli_mode": false,
+  "theme": "classic"
 }
 ```
 
 - `max_items`: Maximum number of items in history (default: 50).
 - `hotkey`: Documentation only; the shortcut is configured in the system.
 - `cli_mode`: If `true`, `betterclip show` uses a terminal picker (numbered list + stdin) instead of rofi, and prints the selected text to stdout. Use on servers or over SSH where there is no display; you can pipe the output (e.g. `betterclip show | xclip -i -b` on a machine with X11).
+- `theme`: Rofi picker look. `classic` — default rofi appearance (same as before themes existed). `modern_mac` — light “Modern Mac” style (bundled theme file): pager scroll mode, no in-theme scrollbar, and on Wayland no `-normal-window` to reduce XWayland scroll/flicker quirks. Unknown values fall back to `classic`.
 
 ## Data structure
 
@@ -108,7 +112,11 @@ cd /path/to/betterclip
 PYTHONPATH=. python3 -m unittest discover -v
 ```
 
-Runs 16 tests covering config, storage, clipboard, picker, utils and daemon.
+Runs 24 tests covering config, storage, clipboard, picker, utils, daemon, and rofi theme assets.
+
+## Troubleshooting
+
+See **[docs/troubleshooting.md](docs/troubleshooting.md)** for common fixes (systemd clipboard environment, rofi/Escape focus on GNOME, etc.).
 
 ## License
 
