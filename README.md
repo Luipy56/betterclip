@@ -64,15 +64,46 @@ systemctl --user start betterclip
 
 Keep the `PassEnvironment` / `Environment` lines from the sample unit so the daemon inherits `DISPLAY` and `WAYLAND_DISPLAY` (see [docs/troubleshooting.md](docs/troubleshooting.md)).
 
-### 3. Super+V shortcut
+### 3. Super+V shortcut (GNOME/Ubuntu)
 
-On **GNOME/Ubuntu**:
+`hotkey` in `config.json` is documentation only — GNOME must own the real binding.
 
-1. Open *Settings* → *Keyboard* → *Custom shortcuts*
-2. Click *+* to add
-3. Name: `betterclip`
-4. Command: `betterclip show` (or full path `~/.local/bin/betterclip show` if needed)
-5. Shortcut: Super+V (or Ctrl+Alt+V if Super+V is taken)
+**Free Super+V first.** On Ubuntu, GNOME already uses Super+V for the notification tray. If you bind betterclip without freeing it, `gsd-media-keys` logs `Failed to grab accelerator` for your custom shortcut and Super+V does nothing useful:
+
+```bash
+# Keep the tray on Super+M only
+gsettings set org.gnome.shell.keybindings toggle-message-tray "['<Super>m']"
+```
+
+**Use the session launcher as the command** (not bare `betterclip show`). GNOME custom shortcuts often run with an empty/`PATH`-less environment; `bin/betterclip-show-session.sh` imports your graphical session env and then runs the picker:
+
+```bash
+# Absolute path to the script in your clone (shebang is #!/bin/bash)
+/path/to/betterclip/bin/betterclip-show-session.sh
+```
+
+Then in *Settings* → *Keyboard* → *Custom shortcuts* → *+*:
+
+1. Name: `betterclip`
+2. Command: the absolute path above
+3. Shortcut: Super+V (or Ctrl+Alt+V if Super+V still fails to grab)
+
+Optional CLI equivalent:
+
+```bash
+SCHEMA=org.gnome.settings-daemon.plugins.media-keys
+BASE=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings
+KEY="$BASE/custom0/"
+SCRIPT="/path/to/betterclip/bin/betterclip-show-session.sh"
+
+gsettings set org.gnome.shell.keybindings toggle-message-tray "['<Super>m']"
+gsettings set $SCHEMA custom-keybindings "['$KEY']"
+gsettings set $SCHEMA.custom-keybinding:$KEY name 'betterclip'
+gsettings set $SCHEMA.custom-keybinding:$KEY command "$SCRIPT"
+gsettings set $SCHEMA.custom-keybinding:$KEY binding '<Super>v'
+```
+
+If Super+V still does nothing, check `journalctl --user -u org.gnome.SettingsDaemon.MediaKeys.service` for grab failures, confirm `gsd-media-keys` is running, and see [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ### 4. Workflow
 
@@ -91,14 +122,14 @@ File `~/.config/betterclip/config.json`:
   "max_items": 50,
   "hotkey": "Super+V",
   "cli_mode": false,
-  "theme": "classic"
+  "theme": "modern_mac"
 }
 ```
 
 - `max_items`: Maximum number of items in history (default: 50).
-- `hotkey`: Documentation only; the shortcut is configured in the system.
+- `hotkey`: Documentation only; the shortcut is configured in the system (see Super+V section above).
 - `cli_mode`: If `true`, `betterclip show` uses a terminal picker (numbered list + stdin) instead of rofi, and prints the selected text to stdout. Use on servers or over SSH where there is no display; you can pipe the output (e.g. `betterclip show | xclip -i -b` on a machine with X11).
-- `theme`: Rofi picker look. `classic` — default rofi appearance (same as before themes existed). `modern_mac` — light “Modern Mac” style (bundled theme file): pager scroll mode, no in-theme scrollbar, and on Wayland no `-normal-window` to reduce XWayland scroll/flicker quirks. Unknown values fall back to `classic`.
+- `theme`: Rofi picker look. Default is `modern_mac` — light “Modern Mac” style (bundled theme file): pager scroll mode, no in-theme scrollbar, and on Wayland no `-normal-window` to reduce XWayland scroll/flicker quirks. `classic` — stock rofi appearance. Unknown values fall back to `modern_mac`.
 
 ## Data structure
 

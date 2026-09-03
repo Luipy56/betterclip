@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 THEMES = frozenset({"classic", "modern_mac"})
-DEFAULT_THEME = "classic"
+DEFAULT_THEME = "modern_mac"
 
 _THEMES_DIR = Path(__file__).resolve().parent / "themes"
 

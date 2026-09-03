@@ -50,6 +50,39 @@ You should see a stable **active (running)** state; on GNOME Wayland you may see
 
 ---
 
+## Super+V does nothing (custom shortcut never runs)
+
+**Symptoms:** The notification tray no longer opens on Super+V (or never did), but betterclip’s picker also never appears. Settings shows your custom shortcut, yet pressing the key has no effect.
+
+**Causes (common on GNOME/Ubuntu):**
+
+1. **Super+V is still owned by the shell** (`toggle-message-tray`). `gsd-media-keys` then logs `Failed to grab accelerator for keybinding custom:...` and never runs your command.
+2. **Command is wrong for a custom shortcut.** Bare `betterclip show` / `#!/usr/bin/env bash` can fail when GNOME launches with a minimal/`PATH`-less environment.
+3. **`gsd-media-keys` is not running** (e.g. after it was killed). Custom shortcuts stop working until the MediaKeys target is started again.
+
+**Fix:**
+
+1. Free Super+V, then bind the session launcher with an absolute path:
+
+   ```bash
+   gsettings set org.gnome.shell.keybindings toggle-message-tray "['<Super>m']"
+   # Command in Settings (or gsettings): /path/to/betterclip/bin/betterclip-show-session.sh
+   # Binding: <Super>v   (fallback: <Control><Alt>v)
+   ```
+
+2. Confirm grab + daemon:
+
+   ```bash
+   journalctl --user -u org.gnome.SettingsDaemon.MediaKeys.service -b --no-pager | grep -i grab
+   pgrep -a gsd-media-keys
+   # If media-keys is dead:
+   systemctl --user start org.gnome.SettingsDaemon.MediaKeys.target
+   ```
+
+3. Prefer `bin/betterclip-show-session.sh` over `betterclip show` so rofi inherits `DISPLAY` / `WAYLAND_DISPLAY` / `XDG_RUNTIME_DIR`.
+
+---
+
 ## Super+V opens rofi but Escape does not close it
 
 **Symptoms:** The picker appears, but keyboard shortcuts (e.g. Escape) do nothing until you click the rofi window.

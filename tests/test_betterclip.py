@@ -31,7 +31,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg["max_items"], 50)
         self.assertEqual(cfg["hotkey"], "Super+V")
         self.assertFalse(cfg["cli_mode"])
-        self.assertEqual(cfg["theme"], "classic")
+        self.assertEqual(cfg["theme"], "modern_mac")
 
     def test_load_config_from_file(self):
         from betterclip.config import get_config_path, load_config
@@ -66,14 +66,14 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg1["max_items"], 10)
         self.assertEqual(cfg2["max_items"], 10)
 
-    def test_load_config_unknown_theme_defaults_to_classic(self):
+    def test_load_config_unknown_theme_defaults_to_modern_mac(self):
         from betterclip.config import get_config_path, load_config
 
         path = get_config_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('{"theme": "does_not_exist"}', encoding="utf-8")
         cfg = load_config(use_cache=False)
-        self.assertEqual(cfg["theme"], "classic")
+        self.assertEqual(cfg["theme"], "modern_mac")
 
     def test_load_config_theme_modern_mac_normalized(self):
         from betterclip.config import get_config_path, load_config

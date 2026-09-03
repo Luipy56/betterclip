@@ -14,8 +14,8 @@ DEFAULT_CONFIG = {
     "hotkey": "Super+V",
     "cli_mode": False,
     # Rofi picker appearance. Allowed values:
-    #   classic     — default rofi look (current behavior)
-    #   modern_mac  — light “Modern Mac” style (bundled .rasi)
+    #   modern_mac  — light “Modern Mac” style (bundled .rasi; default)
+    #   classic     — stock rofi look
     "theme": DEFAULT_THEME,
 }
 

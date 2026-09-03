@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # GNOME custom shortcuts often run with almost no environment; rofi needs the
 # same DISPLAY / WAYLAND_DISPLAY / XDG_RUNTIME_DIR as your graphical session.
 set -euo pipefail
