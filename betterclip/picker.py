@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 
 from .clipboard import get_write_tool, is_wayland
 from .config import load_config
@@ -11,10 +12,63 @@ from .rofi_theme import DEFAULT_THEME, rofi_scroll_method_args, rofi_theme_args
 from .storage import get_history_reversed
 from .utils import PICKER_MAX_LINES, PICKER_TRUNCATE_LEN, ROFI_TIMEOUT, find_executable
 
+# Modifier keysyms that GNOME may still hold while handling Super+V / Ctrl+Alt+V.
+_SHORTCUT_MODIFIER_KEYSYMS = (
+    "Super_L",
+    "Super_R",
+    "Alt_L",
+    "Alt_R",
+    "Control_L",
+    "Control_R",
+)
+
 
 def main_show() -> None:
     """Entry point for betterclip-show script."""
     sys.exit(0 if run_picker() else 1)
+
+
+def _wait_for_shortcut_modifiers_release(timeout: float = 1.0) -> None:
+    """
+    Wait until Super/Ctrl/Alt are up.
+
+    GNOME custom shortcuts keep a keyboard grab while the chord is held. If rofi
+    maps during that grab (typical with Super+V), it appears on XWayland without
+    keyboard focus until the user clicks it.
+    """
+    try:
+        from Xlib import XK, display
+    except ImportError:
+        time.sleep(0.15)
+        return
+
+    try:
+        dpy = display.Display()
+    except Exception:
+        time.sleep(0.15)
+        return
+
+    keycodes: set[int] = set()
+    for name in _SHORTCUT_MODIFIER_KEYSYMS:
+        keysym = XK.string_to_keysym(name)
+        if not keysym:
+            continue
+        for entry in dpy.keysym_to_keycodes(keysym):
+            # python-xlib yields (keycode, level) or similar tuples
+            kc = entry[0] if isinstance(entry, tuple) else int(entry)
+            if kc:
+                keycodes.add(kc)
+
+    if not keycodes:
+        time.sleep(0.15)
+        return
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        keymap = dpy.query_keymap()
+        if not any(keymap[kc // 8] & (1 << (kc % 8)) for kc in keycodes):
+            return
+        time.sleep(0.02)
 
 
 def _truncate(text: str, max_len: int = PICKER_TRUNCATE_LEN) -> str:
@@ -72,13 +126,11 @@ def show_picker(max_lines: int = PICKER_MAX_LINES) -> str | None:
 
     theme = config.get("theme", DEFAULT_THEME)
     rofi_args = [rofi, "-dmenu", *rofi_theme_args(theme), *rofi_scroll_method_args(theme)]
-    # Experimental: behave as a normal window; helps some Mutter focus edge cases.
-    # modern_mac uses a heavy rounded theme; -normal-window on XWayland often causes
-    # scroll/focus glitches and transient unmap — keep classic behavior for that theme.
-    if is_wayland() and theme != "modern_mac":
+    # GNOME Wayland + global shortcut: rofi usually lands on XWayland. Both
+    # -normal-window and -steal-focus are required so keyboard focus works without
+    # an extra click (modern_mac used to skip -normal-window and lost focus).
+    if is_wayland():
         rofi_args.append("-normal-window")
-    # GNOME Wayland + global shortcut: rofi runs on XWayland without keyboard focus
-    # until you click. -steal-focus fixes that (rofi default is -no-steal-focus).
     rofi_args.extend(
         [
             "-steal-focus",
@@ -89,6 +141,9 @@ def show_picker(max_lines: int = PICKER_MAX_LINES) -> str | None:
             "-i",
         ]
     )
+
+    # Release Super/Ctrl/Alt before mapping rofi (shortcut grab otherwise steals focus).
+    _wait_for_shortcut_modifiers_release()
 
     try:
         proc = subprocess.Popen(

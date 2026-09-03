@@ -129,7 +129,7 @@ File `~/.config/betterclip/config.json`:
 - `max_items`: Maximum number of items in history (default: 50).
 - `hotkey`: Documentation only; the shortcut is configured in the system (see Super+V section above).
 - `cli_mode`: If `true`, `betterclip show` uses a terminal picker (numbered list + stdin) instead of rofi, and prints the selected text to stdout. Use on servers or over SSH where there is no display; you can pipe the output (e.g. `betterclip show | xclip -i -b` on a machine with X11).
-- `theme`: Rofi picker look. Default is `modern_mac` — light “Modern Mac” style (bundled theme file): pager scroll mode, no in-theme scrollbar, and on Wayland no `-normal-window` to reduce XWayland scroll/flicker quirks. `classic` — stock rofi appearance. Unknown values fall back to `modern_mac`.
+- `theme`: Rofi picker look. Default is `modern_mac` — light “Modern Mac” style (bundled theme file): pager scroll mode, no in-theme scrollbar. `classic` — stock rofi appearance. On Wayland, the picker always uses `-normal-window` and `-steal-focus` so Super+V can type without an extra click. Unknown values fall back to `modern_mac`.
 
 ## Data structure
 

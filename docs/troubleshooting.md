@@ -87,11 +87,12 @@ You should see a stable **active (running)** state; on GNOME Wayland you may see
 
 **Symptoms:** The picker appears, but keyboard shortcuts (e.g. Escape) do nothing until you click the rofi window.
 
-**Cause:** GNOME **custom shortcuts** often run the command with almost no environment. `rofi` may open on XWayland without keyboard focus until the window is clicked.
+**Cause:** GNOME **custom shortcuts** often run the command with a keyboard grab still held (Super still down) and a minimal environment. `rofi` then opens on XWayland without keyboard focus until the window is clicked. Skipping `-normal-window` (older `modern_mac` behavior) made this worse.
 
 **Fix:**
 
 - Prefer launching the picker via `bin/betterclip-show-session.sh` (from your clone), which imports `systemctl --user show-environment` so `DISPLAY`, `WAYLAND_DISPLAY`, and `XDG_RUNTIME_DIR` match your session.
+- Current `betterclip show` waits for Super/Ctrl/Alt to be released and passes both `-normal-window` and `-steal-focus` to rofi on Wayland.
 - In **Settings → Keyboard → Custom shortcuts**, set the command to the full path of that script, or to an equivalent wrapper that exports the same variables.
 
 ---

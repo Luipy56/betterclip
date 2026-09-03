@@ -268,14 +268,18 @@ class TestPicker(unittest.TestCase):
 
         with patch("betterclip.picker.find_executable", return_value="/usr/bin/rofi"):
             with patch("betterclip.picker.load_config", return_value={"cli_mode": False, "theme": "modern_mac"}):
-                with patch("subprocess.Popen", return_value=mock_proc) as popen_mock:
-                    show_picker()
+                with patch("betterclip.picker.is_wayland", return_value=True):
+                    with patch("betterclip.picker._wait_for_shortcut_modifiers_release"):
+                        with patch("subprocess.Popen", return_value=mock_proc) as popen_mock:
+                            show_picker()
         argv = popen_mock.call_args[0][0]
         self.assertIn("-theme", argv)
         theme_idx = argv.index("-theme")
         self.assertTrue(str(argv[theme_idx + 1]).endswith("modern_mac.rasi"))
         self.assertEqual(Path(argv[theme_idx + 1]), _THEMES_DIR / "modern_mac.rasi")
         self.assertEqual(argv[argv.index("-scroll-method") + 1], "0")
+        self.assertIn("-normal-window", argv)
+        self.assertIn("-steal-focus", argv)
 
     def test_show_picker_cli_mode_returns_selection(self):
         """When cli_mode is True, selection comes from stdin (no rofi)."""
