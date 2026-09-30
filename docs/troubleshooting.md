@@ -17,9 +17,16 @@ Xlib.error.DisplayNameError: Bad display name ""
 1. Ensure your unit passes the session variables from the user manager into the service. The sample unit in the repo includes:
 
    ```ini
+   After=graphical-session.target
+   PartOf=graphical-session.target
    Environment=XDG_RUNTIME_DIR=%t
-   PassEnvironment=WAYLAND_DISPLAY XDG_SESSION_TYPE DISPLAY
+   PassEnvironment=WAYLAND_DISPLAY XDG_SESSION_TYPE DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
+
+   [Install]
+   WantedBy=graphical-session.target
    ```
+
+   Prefer `WantedBy=graphical-session.target` over `default.target`. Binding to `default.target` often starts the daemon before the compositor exports `DISPLAY`, which triggers the error above. The daemon also waits briefly for `DISPLAY` via `systemctl --user show-environment` as a safety net.
 
 2. If you copied an older unit or wrote one by hand, merge in those lines (and reload):
 
@@ -28,19 +35,13 @@ Xlib.error.DisplayNameError: Bad display name ""
    systemctl --user restart betterclip
    ```
 
-3. On some setups (e.g. GNOME on Wayland with XWayland auth), also pass:
-
-   ```ini
-   PassEnvironment=WAYLAND_DISPLAY XDG_SESSION_TYPE DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
-   ```
-
-4. Confirm the manager actually has the variables (after graphical login):
+3. Confirm the manager actually has the variables (after graphical login):
 
    ```bash
    systemctl --user show-environment | grep -E 'DISPLAY|WAYLAND|XDG_SESSION_TYPE'
    ```
 
-5. Check logs:
+4. Check logs:
 
    ```bash
    journalctl --user -u betterclip.service -b --no-pager
@@ -83,6 +84,24 @@ You should see a stable **active (running)** state; on GNOME Wayland you may see
 
 ---
 
+## Super+V / picker crashes immediately (rofi 2.x on GNOME Wayland)
+
+**Symptoms:** Shortcut does nothing, or `betterclip show` exits at once. stderr may include:
+
+```text
+Rofi on wayland requires support for the layer shell protocol
+```
+
+**Cause:** rofi 2.x prefers native Wayland and needs the **wlr layer-shell** protocol. GNOME/Mutter does not implement it, so rofi aborts.
+
+**Fix:** Current betterclip clears `WAYLAND_DISPLAY` for the rofi subprocess so it runs on **XWayland**. Update to a build that includes that change, or launch with:
+
+```bash
+env -u WAYLAND_DISPLAY betterclip show
+```
+
+---
+
 ## Super+V opens rofi but Escape does not close it
 
 **Symptoms:** The picker appears, but keyboard shortcuts (e.g. Escape) do nothing until you click the rofi window.
@@ -92,7 +111,7 @@ You should see a stable **active (running)** state; on GNOME Wayland you may see
 **Fix:**
 
 - Prefer launching the picker via `bin/betterclip-show-session.sh` (from your clone), which imports `systemctl --user show-environment` so `DISPLAY`, `WAYLAND_DISPLAY`, and `XDG_RUNTIME_DIR` match your session.
-- Current `betterclip show` waits for Super/Ctrl/Alt to be released and passes both `-normal-window` and `-steal-focus` to rofi on Wayland.
+- Current `betterclip show` waits for Super/Ctrl/Alt to be released and passes both `-normal-window` and `-steal-focus` to rofi on Wayland (and forces XWayland under rofi 2.x).
 - In **Settings → Keyboard → Custom shortcuts**, set the command to the full path of that script, or to an equivalent wrapper that exports the same variables.
 
 ---
@@ -101,7 +120,7 @@ You should see a stable **active (running)** state; on GNOME Wayland you may see
 
 | File | Purpose |
 |------|---------|
-| `systemd/betterclip.service` | Reference unit with `PassEnvironment` |
+| `systemd/betterclip.service` | Reference unit (`graphical-session` + `PassEnvironment`) |
 | `bin/betterclip-show-session.sh` | Session-aware launcher for `betterclip show` |
 
 After changing `~/.config/systemd/user/betterclip.service`, always run `systemctl --user daemon-reload`.

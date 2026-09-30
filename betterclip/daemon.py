@@ -188,6 +188,43 @@ def _x11_run_watcher() -> None:
             _on_new_clipboard_text(text)
 
 
+def _wait_for_display(timeout_s: float = 60.0, interval_s: float = 1.0) -> str | None:
+    """Wait until DISPLAY is set (systemd user units often start before the GUI)."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        display = os.environ.get("DISPLAY", "").strip()
+        if display:
+            return display
+        # Refresh from the user manager if the unit was started too early.
+        try:
+            out = subprocess.run(
+                ["systemctl", "--user", "show-environment"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+            for line in out.stdout.splitlines():
+                if line.startswith("DISPLAY="):
+                    value = line.split("=", 1)[1].strip()
+                    if value:
+                        os.environ["DISPLAY"] = value
+                        return value
+                if line.startswith("WAYLAND_DISPLAY="):
+                    value = line.split("=", 1)[1].strip()
+                    if value:
+                        os.environ["WAYLAND_DISPLAY"] = value
+                if line.startswith("XDG_SESSION_TYPE="):
+                    value = line.split("=", 1)[1].strip()
+                    if value:
+                        os.environ["XDG_SESSION_TYPE"] = value
+        except (OSError, subprocess.SubprocessError):
+            pass
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(interval_s)
+
+
 def run_daemon() -> None:
     from .clipboard import is_wayland
 
@@ -196,6 +233,9 @@ def run_daemon() -> None:
         signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
     except ValueError:
         pass  # Signals only work in main thread
+
+    # User units WantedBy=default.target can race the graphical session.
+    _wait_for_display()
 
     if is_wayland():
         wl = find_executable("wl-paste")
@@ -235,4 +275,7 @@ def run_daemon() -> None:
                 sys.stderr.flush()
                 _wayland_poll_forever()
     else:
+        if not os.environ.get("DISPLAY", "").strip():
+            sys.stderr.write("betterclip: DISPLAY is empty; cannot attach to X11.\n")
+            sys.exit(1)
         _x11_run_watcher()

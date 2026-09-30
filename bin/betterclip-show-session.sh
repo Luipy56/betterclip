@@ -1,6 +1,7 @@
 #!/bin/bash
 # GNOME custom shortcuts often run with almost no environment; rofi needs the
-# same DISPLAY / WAYLAND_DISPLAY / XDG_RUNTIME_DIR as your graphical session.
+# same DISPLAY / XDG_RUNTIME_DIR as your graphical session.
+# betterclip show itself clears WAYLAND_DISPLAY for rofi 2.x on GNOME (no layer-shell).
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 while IFS= read -r line || [[ -n "$line" ]]; do

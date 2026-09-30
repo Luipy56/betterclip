@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -21,6 +22,22 @@ _SHORTCUT_MODIFIER_KEYSYMS = (
     "Control_L",
     "Control_R",
 )
+
+
+def _rofi_env() -> dict[str, str]:
+    """
+    Build env for rofi.
+
+    rofi 2.x on native Wayland requires the wlr layer-shell protocol. GNOME/Mutter
+    does not provide it, so rofi aborts. Force the X11 backend (XWayland) instead.
+    """
+    env = os.environ.copy()
+    if is_wayland():
+        env.pop("WAYLAND_DISPLAY", None)
+        # Keep DISPLAY so rofi talks to XWayland.
+        if not env.get("DISPLAY", "").strip():
+            env["DISPLAY"] = ":0"
+    return env
 
 
 def main_show() -> None:
@@ -126,9 +143,9 @@ def show_picker(max_lines: int = PICKER_MAX_LINES) -> str | None:
 
     theme = config.get("theme", DEFAULT_THEME)
     rofi_args = [rofi, "-dmenu", *rofi_theme_args(theme), *rofi_scroll_method_args(theme)]
-    # GNOME Wayland + global shortcut: rofi usually lands on XWayland. Both
-    # -normal-window and -steal-focus are required so keyboard focus works without
-    # an extra click (modern_mac used to skip -normal-window and lost focus).
+    # GNOME Wayland: _rofi_env() forces XWayland (rofi 2.x needs layer-shell).
+    # Both -normal-window and -steal-focus are required so keyboard focus works
+    # without an extra click after Super+V (including modern_mac).
     if is_wayland():
         rofi_args.append("-normal-window")
     rofi_args.extend(
@@ -152,6 +169,7 @@ def show_picker(max_lines: int = PICKER_MAX_LINES) -> str | None:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
+            env=_rofi_env(),
         )
         out, _ = proc.communicate(input="\n".join(lines), timeout=ROFI_TIMEOUT)
     except (subprocess.TimeoutExpired, subprocess.SubprocessError):

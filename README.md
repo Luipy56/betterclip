@@ -7,7 +7,7 @@ Clipboard manager for Linux (Wayland/X11), Windows+V style.
 - **Automatic capture**: Records text when you copy (Ctrl+C, Ctrl+Shift+C, right-click → Copy). Mouse selection is not recorded to avoid duplicate or partial entries.
 - **Configurable history**: Stores up to N items (default 50).
 - **Picker with shortcut**: Super+V opens the history in rofi to choose what to paste.
-- **Compatibility**: Wayland (Ubuntu 24.04 default) and X11.
+- **Compatibility**: Wayland (GNOME/Mutter via XWayland) and X11. Tested on Ubuntu 24.04 and 26.04.
 
 ## Dependencies
 
@@ -52,10 +52,9 @@ betterclip daemon
 mkdir -p ~/.config/systemd/user
 cp systemd/betterclip.service ~/.config/systemd/user/
 
-# Edit ExecStart if you use venv or PYTHONPATH:
-# ExecStart=/path/to/project/.venv/bin/python -m betterclip daemon
-# Or with PYTHONPATH:
-# ExecStart=/usr/bin/env bash -c 'cd /path/to/project && PYTHONPATH=. python3 -m betterclip daemon'
+# Edit WorkingDirectory / ExecStart / PYTHONPATH for your clone path.
+# The sample unit is WantedBy=graphical-session.target so it starts after the desktop
+# (avoids DISPLAY="" races at login).
 
 systemctl --user daemon-reload
 systemctl --user enable betterclip
@@ -105,6 +104,8 @@ gsettings set $SCHEMA.custom-keybinding:$KEY binding '<Super>v'
 
 If Super+V still does nothing, check `journalctl --user -u org.gnome.SettingsDaemon.MediaKeys.service` for grab failures, confirm `gsd-media-keys` is running, and see [docs/troubleshooting.md](docs/troubleshooting.md).
 
+On GNOME Wayland, the picker runs rofi on **XWayland** automatically: rofi 2.x needs the wlr layer-shell protocol, which Mutter does not provide.
+
 ### 4. Workflow
 
 1. Copy text as usual (Ctrl+C or mouse selection).
@@ -129,7 +130,7 @@ File `~/.config/betterclip/config.json`:
 - `max_items`: Maximum number of items in history (default: 50).
 - `hotkey`: Documentation only; the shortcut is configured in the system (see Super+V section above).
 - `cli_mode`: If `true`, `betterclip show` uses a terminal picker (numbered list + stdin) instead of rofi, and prints the selected text to stdout. Use on servers or over SSH where there is no display; you can pipe the output (e.g. `betterclip show | xclip -i -b` on a machine with X11).
-- `theme`: Rofi picker look. Default is `modern_mac` — light “Modern Mac” style (bundled theme file): pager scroll mode, no in-theme scrollbar. `classic` — stock rofi appearance. On Wayland, the picker always uses `-normal-window` and `-steal-focus` so Super+V can type without an extra click. Unknown values fall back to `modern_mac`.
+- `theme`: Rofi picker look. Default is `modern_mac` — light “Modern Mac” style (bundled theme file): pager scroll mode, no in-theme scrollbar. `classic` — stock rofi appearance. On Wayland/GNOME the picker forces XWayland (rofi 2.x) and uses `-normal-window` plus `-steal-focus` so Super+V can type without an extra click. Unknown values fall back to `modern_mac`.
 
 ## Data structure
 
@@ -143,7 +144,7 @@ cd /path/to/betterclip
 PYTHONPATH=. python3 -m unittest discover -v
 ```
 
-Runs 24 tests covering config, storage, clipboard, picker, utils, daemon, and rofi theme assets.
+Runs 25 tests covering config, storage, clipboard, picker, utils, daemon, and rofi theme assets.
 
 ## Troubleshooting
 

@@ -1,16 +1,21 @@
 [Unit]
-Description=betterClip clipboard manager daemon
+Description=betterclip clipboard manager daemon
 After=graphical-session.target
+PartOf=graphical-session.target
 
 [Service]
 Type=simple
-# Use the venv Python from your clone (PEP 668 blocks system pip install).
-# Example: ExecStart=/home/you/Repos/betterclip/.venv/bin/python -m betterclip daemon
+WorkingDirectory=/home/luipy/Repos/Luipy56/betterclip
 ExecStart=/usr/bin/python3 -m betterclip daemon
-Restart=on-failure
-RestartSec=2
+Environment=PYTHONPATH=/home/luipy/Repos/Luipy56/betterclip
+# Services do not inherit the graphical session unless these are passed from the user manager.
 Environment=XDG_RUNTIME_DIR=%t
-PassEnvironment=WAYLAND_DISPLAY XDG_SESSION_TYPE DISPLAY
+PassEnvironment=WAYLAND_DISPLAY XDG_SESSION_TYPE DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
+Restart=on-failure
+RestartSec=3
+# Boot races the compositor; allow several retries before giving up.
+StartLimitIntervalSec=120
+StartLimitBurst=20
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target

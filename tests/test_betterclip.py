@@ -253,6 +253,23 @@ class TestPicker(unittest.TestCase):
                 result = show_picker()
         self.assertEqual(result, "second item")
 
+    def test_rofi_env_clears_wayland_display_on_gnome(self):
+        """rofi 2.x needs X11 on GNOME (no wlr layer-shell)."""
+        from betterclip.picker import _rofi_env
+
+        with patch.dict(
+            os.environ,
+            {
+                "XDG_SESSION_TYPE": "wayland",
+                "WAYLAND_DISPLAY": "wayland-0",
+                "DISPLAY": ":0",
+            },
+            clear=False,
+        ):
+            env = _rofi_env()
+        self.assertNotIn("WAYLAND_DISPLAY", env)
+        self.assertEqual(env.get("DISPLAY"), ":0")
+
     def test_show_picker_modern_mac_passes_theme_file(self):
         """modern_mac theme adds -theme pointing at bundled modern_mac.rasi."""
         from unittest.mock import MagicMock
