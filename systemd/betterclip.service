@@ -2,6 +2,9 @@
 Description=betterclip clipboard manager daemon
 After=graphical-session.target
 PartOf=graphical-session.target
+# Boot races the compositor; allow several retries before giving up.
+StartLimitIntervalSec=120
+StartLimitBurst=20
 
 [Service]
 Type=simple
@@ -11,11 +14,9 @@ Environment=PYTHONPATH=/home/luipy/Repos/Luipy56/betterclip
 # Services do not inherit the graphical session unless these are passed from the user manager.
 Environment=XDG_RUNTIME_DIR=%t
 PassEnvironment=WAYLAND_DISPLAY XDG_SESSION_TYPE DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
-Restart=on-failure
+# on-failure skips exit 0 (wl-paste --watch dying after a false-positive probe at login).
+Restart=always
 RestartSec=3
-# Boot races the compositor; allow several retries before giving up.
-StartLimitIntervalSec=120
-StartLimitBurst=20
 
 [Install]
 WantedBy=graphical-session.target

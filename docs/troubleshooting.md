@@ -6,11 +6,15 @@ Typical issues are environment-related (systemd user services and desktop shortc
 
 **Symptoms:** `betterclip show` still opens and shows old items, but new copies never appear. The daemon may restart in a loop or stay dead.
 
-**Cause:** The systemd **user** unit runs with a minimal environment. Without `DISPLAY`, `WAYLAND_DISPLAY`, and related variables, the daemon cannot attach to the session clipboard stack. It may treat the session as plain X11 with an empty display and exit with an error such as:
+**Cause:** Two common cases:
+
+1. The systemd **user** unit runs with a minimal environment. Without `DISPLAY`, `WAYLAND_DISPLAY`, and related variables, the daemon cannot attach to the session clipboard stack. It may treat the session as plain X11 with an empty display and exit with an error such as:
 
 ```text
 Xlib.error.DisplayNameError: Bad display name ""
 ```
+
+2. At login on GNOME, `wl-paste --watch` can hang just long enough to look supported, then exit. Older daemons treated that as a clean shutdown (`status=0/SUCCESS`) and **did not restart** (`Restart=on-failure`). History stays frozen until you start the unit by hand. Check `systemctl --user status betterclip` — if it is `inactive (dead)` with a sub-second runtime, this is the race.
 
 **Fix:**
 
@@ -21,6 +25,7 @@ Xlib.error.DisplayNameError: Bad display name ""
    PartOf=graphical-session.target
    Environment=XDG_RUNTIME_DIR=%t
    PassEnvironment=WAYLAND_DISPLAY XDG_SESSION_TYPE DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
+   Restart=always
 
    [Install]
    WantedBy=graphical-session.target
@@ -47,7 +52,7 @@ Xlib.error.DisplayNameError: Bad display name ""
    journalctl --user -u betterclip.service -b --no-pager
    ```
 
-You should see a stable **active (running)** state; on GNOME Wayland you may see a message about using XFixes on XWayland when `wl-paste --watch` is not available.
+You should see a stable **active (running)** state; on GNOME Wayland you may see a message about using XFixes on XWayland when `wl-paste --watch` is not available. If the unit is dead, `systemctl --user start betterclip` restores capture immediately.
 
 ---
 

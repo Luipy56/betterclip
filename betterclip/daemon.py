@@ -179,8 +179,11 @@ def _x11_run_watcher() -> None:
     while True:
         try:
             ev = disp.next_event()
-        except Exception:
-            break
+        except Exception as exc:
+            # Silent return was treated as success by systemd (Restart=on-failure).
+            sys.stderr.write(f"betterclip: X11 event loop ended ({exc!r}).\n")
+            sys.stderr.flush()
+            sys.exit(1)
         if ev.type != sel_notify_type or ev.selection != atom_clipboard:
             continue
         text = read_clipboard()
@@ -188,14 +191,28 @@ def _x11_run_watcher() -> None:
             _on_new_clipboard_text(text)
 
 
-def _wait_for_display(timeout_s: float = 60.0, interval_s: float = 1.0) -> str | None:
-    """Wait until DISPLAY is set (systemd user units often start before the GUI)."""
-    deadline = time.monotonic() + timeout_s
-    while True:
-        display = os.environ.get("DISPLAY", "").strip()
-        if display:
-            return display
-        # Refresh from the user manager if the unit was started too early.
+_SESSION_ENV_KEYS = (
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XDG_SESSION_TYPE",
+    "XAUTHORITY",
+    "DBUS_SESSION_BUS_ADDRESS",
+)
+
+
+def _parse_systemctl_environment(stdout: str) -> dict[str, str]:
+    env: dict[str, str] = {}
+    for line in stdout.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        env[key] = value.strip()
+    return env
+
+
+def import_user_manager_environment(stdout: str | None = None) -> None:
+    """Copy graphical session vars from the user manager into this process."""
+    if stdout is None:
         try:
             out = subprocess.run(
                 ["systemctl", "--user", "show-environment"],
@@ -204,25 +221,53 @@ def _wait_for_display(timeout_s: float = 60.0, interval_s: float = 1.0) -> str |
                 timeout=2,
                 check=False,
             )
-            for line in out.stdout.splitlines():
-                if line.startswith("DISPLAY="):
-                    value = line.split("=", 1)[1].strip()
-                    if value:
-                        os.environ["DISPLAY"] = value
-                        return value
-                if line.startswith("WAYLAND_DISPLAY="):
-                    value = line.split("=", 1)[1].strip()
-                    if value:
-                        os.environ["WAYLAND_DISPLAY"] = value
-                if line.startswith("XDG_SESSION_TYPE="):
-                    value = line.split("=", 1)[1].strip()
-                    if value:
-                        os.environ["XDG_SESSION_TYPE"] = value
+            stdout = out.stdout
         except (OSError, subprocess.SubprocessError):
-            pass
+            return
+    env_map = _parse_systemctl_environment(stdout)
+    for key in _SESSION_ENV_KEYS:
+        value = env_map.get(key, "").strip()
+        if value:
+            os.environ[key] = value
+
+
+def _wait_for_display(timeout_s: float = 60.0, interval_s: float = 1.0) -> str | None:
+    """Wait until DISPLAY is set (systemd user units often start before the GUI)."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        import_user_manager_environment()
+        display = os.environ.get("DISPLAY", "").strip()
+        if display:
+            return display
         if time.monotonic() >= deadline:
             return None
         time.sleep(interval_s)
+
+
+def _monitor_via_x11_or_poll() -> None:
+    """GNOME/Mutter path: XFixes on XWayland, or slow wl-paste polling."""
+    if os.environ.get("DISPLAY", "").strip():
+        sys.stderr.write(
+            "betterclip: Wayland without wl-paste --watch; using XFixes on XWayland.\n"
+        )
+        sys.stderr.flush()
+        try:
+            _x11_run_watcher()
+        except SystemExit:
+            raise
+        except BaseException as exc:
+            sys.stderr.write(
+                f"betterclip: X11 monitor failed ({exc!r}); falling back to wl-paste polling.\n"
+            )
+            sys.stderr.flush()
+            _wayland_poll_forever()
+    else:
+        sys.stderr.write(
+            "betterclip: no DISPLAY (XWayland unavailable). "
+            "Add PassEnvironment=DISPLAY to the systemd user unit.\n"
+        )
+        sys.stderr.flush()
+        _wayland_poll_forever()
 
 
 def run_daemon() -> None:
@@ -249,31 +294,13 @@ def run_daemon() -> None:
                 sys.stderr.write("betterclip: wl-paste not found. Install wl-clipboard.\n")
                 sys.exit(1)
             p.wait()
-        else:
-            # GNOME/Mutter: no wl-paste --watch. Polling wl-paste spawns processes that flicker
-            # in the GNOME dock. Mutter syncs CLIPBOARD to XWayland — use XFixes like native X11.
-            if os.environ.get("DISPLAY", "").strip():
-                sys.stderr.write(
-                    "betterclip: Wayland without wl-paste --watch; using XFixes on XWayland.\n"
-                )
-                sys.stderr.flush()
-                try:
-                    _x11_run_watcher()
-                except SystemExit:
-                    raise
-                except BaseException as exc:
-                    sys.stderr.write(
-                        f"betterclip: X11 monitor failed ({exc!r}); falling back to wl-paste polling.\n"
-                    )
-                    sys.stderr.flush()
-                    _wayland_poll_forever()
-            else:
-                sys.stderr.write(
-                    "betterclip: no DISPLAY (XWayland unavailable). "
-                    "Add PassEnvironment=DISPLAY to the systemd user unit.\n"
-                )
-                sys.stderr.flush()
-                _wayland_poll_forever()
+            # Login race: compositor is not ready, --watch looks alive for ~0.6s, then dies.
+            # Do not treat that as a clean shutdown (systemd Restart=on-failure would skip it).
+            sys.stderr.write(
+                "betterclip: wl-paste --watch exited; falling back to X11/XWayland.\n"
+            )
+            sys.stderr.flush()
+        _monitor_via_x11_or_poll()
     else:
         if not os.environ.get("DISPLAY", "").strip():
             sys.stderr.write("betterclip: DISPLAY is empty; cannot attach to X11.\n")

@@ -374,5 +374,64 @@ class TestRofiThemeAsset(unittest.TestCase):
         self.assertNotIn("parser error", combined.lower())
 
 
+class TestDaemonSessionEnv(unittest.TestCase):
+    def test_import_user_manager_environment_sets_all_keys(self):
+        from betterclip.daemon import import_user_manager_environment
+
+        stdout = (
+            "DISPLAY=:0\n"
+            "WAYLAND_DISPLAY=wayland-0\n"
+            "XDG_SESSION_TYPE=wayland\n"
+            "XAUTHORITY=/tmp/xauth\n"
+            "UNRELATED=ignore\n"
+        )
+        with patch.dict(os.environ, {"DISPLAY": "", "WAYLAND_DISPLAY": ""}, clear=False):
+            os.environ.pop("WAYLAND_DISPLAY", None)
+            import_user_manager_environment(stdout)
+            self.assertEqual(os.environ.get("DISPLAY"), ":0")
+            self.assertEqual(os.environ.get("WAYLAND_DISPLAY"), "wayland-0")
+            self.assertEqual(os.environ.get("XDG_SESSION_TYPE"), "wayland")
+            self.assertEqual(os.environ.get("XAUTHORITY"), "/tmp/xauth")
+
+    def test_run_daemon_falls_back_when_wl_paste_watch_exits(self):
+        from unittest.mock import MagicMock
+
+        from betterclip import daemon as daemon_mod
+
+        fake_proc = MagicMock()
+        fake_proc.wait.return_value = 1
+        calls: list[str] = []
+
+        def fake_fallback():
+            calls.append("fallback")
+
+        with (
+            patch.object(daemon_mod, "_wait_for_display", return_value=":0"),
+            patch.object(daemon_mod, "find_executable", return_value="/usr/bin/wl-paste"),
+            patch.object(daemon_mod, "_wayland_wlroots_watch_supported", return_value=True),
+            patch.object(daemon_mod, "_wayland_run_watcher", return_value=fake_proc),
+            patch.object(daemon_mod, "_monitor_via_x11_or_poll", side_effect=fake_fallback),
+            patch("betterclip.clipboard.is_wayland", return_value=True),
+        ):
+            daemon_mod.run_daemon()
+
+        fake_proc.wait.assert_called_once()
+        self.assertEqual(calls, ["fallback"])
+
+
+class TestSystemdUnit(unittest.TestCase):
+    def _unit_text(self) -> str:
+        path = Path(__file__).resolve().parent.parent / "systemd" / "betterclip.service"
+        return path.read_text(encoding="utf-8")
+
+    def test_restart_always_and_start_limit_in_unit_section(self):
+        text = self._unit_text()
+        self.assertRegex(text, r"(?m)^Restart=always$")
+        unit_section = text.split("[Service]", 1)[0]
+        self.assertIn("StartLimitIntervalSec=", unit_section)
+        service_section = text.split("[Service]", 1)[1]
+        self.assertNotIn("StartLimitIntervalSec=", service_section)
+
+
 if __name__ == "__main__":
     unittest.main()
