@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 
 from .clipboard import get_write_tool, is_wayland
 from .config import load_config
@@ -96,6 +97,28 @@ def _truncate(text: str, max_len: int = PICKER_TRUNCATE_LEN) -> str:
     return text.replace("\\", "\\\\").replace("\n", "\\n")
 
 
+def _format_stamp(ts: str | None) -> str:
+    """Local [dd/HH:mm] from an ISO timestamp (history stores UTC)."""
+    if not ts or not str(ts).strip():
+        return "--/--:--"
+    raw = str(ts).strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return "--/--:--"
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    local = dt.astimezone()
+    return local.strftime("%d/%H:%M")
+
+
+def _picker_line(index: int, entry: dict) -> str:
+    preview = _truncate(entry.get("text", ""))
+    return f"{index}\t[{_format_stamp(entry.get('timestamp'))}] {preview}"
+
+
 def _show_cli_picker(max_lines: int = PICKER_MAX_LINES) -> str | None:
     """
     Terminal picker: print numbered history to stderr, read index from stdin.
@@ -106,9 +129,7 @@ def _show_cli_picker(max_lines: int = PICKER_MAX_LINES) -> str | None:
         return None
     n = min(max_lines, len(history))
     for i in range(n):
-        ent = history[i]
-        preview = _truncate(ent.get("text", ""))
-        sys.stderr.write(f"  {i}\t{preview}\n")
+        sys.stderr.write(f"  {_picker_line(i, history[i])}\n")
     sys.stderr.write("Index (0–{}): ".format(n - 1))
     sys.stderr.flush()
     try:
@@ -139,7 +160,7 @@ def show_picker(max_lines: int = PICKER_MAX_LINES) -> str | None:
     if not history:
         return None
 
-    lines = [f"{i}\t{_truncate(ent.get('text', ''))}" for i, ent in enumerate(history)]
+    lines = [_picker_line(i, ent) for i, ent in enumerate(history)]
 
     theme = config.get("theme", DEFAULT_THEME)
     rofi_args = [rofi, "-dmenu", *rofi_theme_args(theme), *rofi_scroll_method_args(theme)]

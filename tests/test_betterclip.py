@@ -234,6 +234,20 @@ class TestPicker(unittest.TestCase):
         self.assertEqual(_truncate("a" * 150, 120), "a" * 117 + "...")
         self.assertIn("\\\\", _truncate("back\\slash", 120))
 
+    def test_format_stamp_local_day_hour_minute(self):
+        from datetime import datetime, timezone
+
+        from betterclip.picker import _format_stamp, _picker_line
+
+        ts = "2026-10-03T14:54:00Z"
+        expected = datetime(2026, 10, 3, 14, 54, tzinfo=timezone.utc).astimezone().strftime("%d/%H:%M")
+        self.assertEqual(_format_stamp(ts), expected)
+        self.assertEqual(_format_stamp("2026-10-03T14:54:00+00:00"), expected)
+        self.assertEqual(_format_stamp(""), "--/--:--")
+        self.assertEqual(_format_stamp("not-a-date"), "--/--:--")
+        line = _picker_line(2, {"text": "copied", "timestamp": ts})
+        self.assertEqual(line, f"2\t[{expected}] copied")
+
     def test_show_picker_with_mocked_rofi(self):
         """When rofi returns a selection, we get the full text back."""
         from unittest.mock import MagicMock
@@ -252,6 +266,11 @@ class TestPicker(unittest.TestCase):
             with patch("subprocess.Popen", return_value=mock_proc):
                 result = show_picker()
         self.assertEqual(result, "second item")
+        fed = mock_proc.communicate.call_args.kwargs.get("input")
+        if fed is None:
+            fed = mock_proc.communicate.call_args[0][0]
+        first = fed.split("\n", 1)[0]
+        self.assertRegex(first, r"^0\t\[\d{2}/\d{2}:\d{2}\] second item$")
 
     def test_rofi_env_clears_wayland_display_on_gnome(self):
         """rofi 2.x needs X11 on GNOME (no wlr layer-shell)."""
