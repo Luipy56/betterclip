@@ -56,6 +56,22 @@ You should see a stable **active (running)** state; on GNOME Wayland you may see
 
 ---
 
+## Screenshots / copied images never appear in history
+
+**Symptoms:** Text copies are recorded, but Print Screen / Copy Image does not show up in the picker.
+
+**Cause:** Image capture needs a tool that can list and read clipboard MIME types. `xsel` only handles text. On GNOME (XWayland) that means **`xclip`**. On native Wayland (wlroots), `wl-paste -l` / `wl-paste -t image/png` from `wl-clipboard` is enough.
+
+**Fix:**
+
+```bash
+sudo apt install xclip wl-clipboard
+```
+
+Then restart the daemon (`systemctl --user restart betterclip`). History stays text-only if neither `xclip` nor `wl-clipboard` can read `image/png` (or jpeg/webp). Images larger than 20 MiB are skipped.
+
+---
+
 ## Super+V does nothing (custom shortcut never runs)
 
 **Symptoms:** The notification tray no longer opens on Super+V (or never did), but betterclip’s picker also never appears. Settings shows your custom shortcut, yet pressing the key has no effect.

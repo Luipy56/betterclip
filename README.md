@@ -4,7 +4,7 @@ Clipboard manager for Linux (Wayland/X11), Windows+V style.
 
 ## Features
 
-- **Automatic capture**: Records text when you copy (Ctrl+C, Ctrl+Shift+C, right-click → Copy). Mouse selection is not recorded to avoid duplicate or partial entries.
+- **Automatic capture**: Records text and images (screenshots, Copy Image) when you copy (Ctrl+C, Ctrl+Shift+C, right-click → Copy). Mouse selection is not recorded to avoid duplicate or partial entries.
 - **Configurable history**: Stores up to N items (default 50).
 - **Picker with shortcut**: Super+V opens the history in rofi to choose what to paste.
 - **Compatibility**: Wayland (GNOME/Mutter via XWayland) and X11. Tested on Ubuntu 24.04 and 26.04.
@@ -14,13 +14,14 @@ Clipboard manager for Linux (Wayland/X11), Windows+V style.
 Install on Ubuntu:
 
 ```bash
-sudo apt install wl-clipboard xsel python3-xlib rofi
+sudo apt install wl-clipboard xsel xclip python3-xlib rofi
 ```
 
 | Package        | Use                                |
 | -------------- | ---------------------------------- |
 | `wl-clipboard` | Wayland: wl-paste, wl-copy         |
-| `xsel`         | X11: read/write clipboard          |
+| `xsel`         | X11: read/write text clipboard     |
+| `xclip`        | X11/XWayland: image MIME (PNG/JPEG/WEBP) |
 | `python3-xlib` | X11: change monitoring             |
 | `rofi`         | History picker                     |
 
@@ -108,10 +109,10 @@ On GNOME Wayland, the picker runs rofi on **XWayland** automatically: rofi 2.x n
 
 ### 4. Workflow
 
-1. Copy text as usual (Ctrl+C or mouse selection).
+1. Copy text or a screenshot as usual (Ctrl+C).
 2. Press Super+V to open the history.
-3. Use rofi to search and pick an item.
-4. Press Enter: the text is copied to the clipboard.
+3. Use rofi to search and pick an item (images show a thumbnail plus a label like `Imagen · PNG · 1920×1080 · 240 KB`).
+4. Press Enter: the text or image is copied back to the clipboard.
 5. Paste wherever you want with Ctrl+V.
 
 ## Configuration
@@ -129,12 +130,13 @@ File `~/.config/betterclip/config.json`:
 
 - `max_items`: Maximum number of items in history (default: 50).
 - `hotkey`: Documentation only; the shortcut is configured in the system (see Super+V section above).
-- `cli_mode`: If `true`, `betterclip show` uses a terminal picker (numbered list + stdin) instead of rofi, and prints the selected text to stdout. Use on servers or over SSH where there is no display; you can pipe the output (e.g. `betterclip show | xclip -i -b` on a machine with X11).
+- `cli_mode`: If `true`, `betterclip show` uses a terminal picker (numbered list + stdin) instead of rofi, and prints the selected text (or image file path) to stdout. Use on servers or over SSH where there is no display; you can pipe the output (e.g. `betterclip show | xclip -i -b` on a machine with X11).
 - `theme`: Rofi picker look. Default is `modern_mac` — light “Modern Mac” style (bundled theme file): pager scroll mode, no in-theme scrollbar. `classic` — stock rofi appearance. On Wayland/GNOME the picker forces XWayland (rofi 2.x) and uses `-normal-window` plus `-steal-focus` so Super+V can type without an extra click. Unknown values fall back to `modern_mac`.
 
 ## Data structure
 
 - **History**: `~/.local/share/betterclip/history.json`
+- **Images**: `~/.local/share/betterclip/images/` (PNG/JPEG/WEBP blobs referenced from history)
 - **Config**: `~/.config/betterclip/config.json`
 
 ## Tests
@@ -144,7 +146,7 @@ cd /path/to/betterclip
 PYTHONPATH=. python3 -m unittest discover -v
 ```
 
-Runs 25 tests covering config, storage, clipboard, picker, utils, daemon, and rofi theme assets.
+Runs the unittest suite covering config, storage (including image blobs), clipboard, picker, utils, daemon, and rofi theme assets.
 
 ## Troubleshooting
 

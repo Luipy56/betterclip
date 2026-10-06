@@ -10,15 +10,66 @@ import sys
 import threading
 import time
 
-from .utils import SUBPROCESS_TIMEOUT, X11_CLIPBOARD_TOOLS, find_executable, find_x11_tool
+from .utils import X11_CLIPBOARD_TOOLS, find_executable, find_x11_tool
+
+
+def _on_clipboard_payload(kind: str, mime: str, data: bytes) -> None:
+    from .storage import add_entry, add_image_entry
+
+    if kind == "image":
+        add_image_entry(data, mime)
+        return
+    text = data.decode("utf-8", errors="replace").strip()
+    if text:
+        add_entry(text)
+
+
+def _on_new_clipboard() -> None:
+    """Probe CLIPBOARD: store an image if present, otherwise text."""
+    from .clipboard import read_clipboard, read_clipboard_image
+
+    img = read_clipboard_image()
+    if img:
+        _on_clipboard_payload("image", img[1], img[0])
+        return
+    text = read_clipboard()
+    if text:
+        _on_clipboard_payload("text", "text/plain", text.encode("utf-8"))
 
 
 def _on_new_clipboard_text(text: str) -> None:
-    from .storage import add_entry
+    _on_clipboard_payload("text", "text/plain", text.encode("utf-8"))
 
-    text = text.strip()
-    if text:
-        add_entry(text)
+
+def wayland_watch_tick() -> None:
+    """
+    Body of `wl-paste --watch`. Consume stdin (avoids pipe deadlock), then
+    send a tagged image-or-text frame on BETTERCLIP_WATCH_FD.
+    """
+    fd = int(os.environ.get("BETTERCLIP_WATCH_FD", "3"))
+    stdin_data = sys.stdin.buffer.read()
+    from .clipboard import first_image_mime, list_clipboard_types, read_clipboard_image, sniff_image_mime
+    from .utils import IMAGE_MAX_BYTES
+
+    types = list_clipboard_types()
+    mime = first_image_mime(types)
+    if mime:
+        sniffed = sniff_image_mime(stdin_data)
+        if sniffed and len(stdin_data) <= IMAGE_MAX_BYTES:
+            _write_watch_frame(fd, 1, sniffed, stdin_data)
+            return
+        img = read_clipboard_image()
+        if img:
+            _write_watch_frame(fd, 1, img[1], img[0])
+        return
+    if stdin_data:
+        _write_watch_frame(fd, 0, "text/plain", stdin_data)
+
+
+def _write_watch_frame(fd: int, kind: int, mime: str, data: bytes) -> None:
+    mime_b = mime.encode("utf-8")
+    inner = bytes([kind]) + struct.pack(">H", len(mime_b)) + mime_b + data
+    os.write(fd, struct.pack(">I", len(inner)) + inner)
 
 
 def _wayland_wlroots_watch_supported(wl: str) -> bool:
@@ -52,23 +103,14 @@ def _wayland_poll_forever() -> None:
     Last-resort: poll wl-paste. Avoid on GNOME — each run can flash an icon in the dock.
     Prefer X11/XWayland when DISPLAY is set (see run_daemon).
     """
-    from .clipboard import read_clipboard
-
     sys.stderr.write(
         "betterclip: wl-paste polling (slow interval to limit dock noise). "
         "Prefer setting DISPLAY for XWayland + XFixes.\n"
     )
     sys.stderr.flush()
-    last: str | None = None
     while True:
         time.sleep(2.0)
-        text = read_clipboard()
-        if text is None:
-            continue
-        if text == last:
-            continue
-        last = text
-        _on_new_clipboard_text(text)
+        _on_new_clipboard()
 
 
 def _wayland_run_watcher(primary: bool) -> subprocess.Popen | None:
@@ -78,13 +120,8 @@ def _wayland_run_watcher(primary: bool) -> subprocess.Popen | None:
         return None
 
     rfd, wfd = os.pipe()
-    wrapper = (
-        "import sys,os,struct;"
-        "d=sys.stdin.buffer.read();"
-        "os.write(3,struct.pack('>I',len(d))+d);"
-        "sys.exit(0)"
-    )
-    args = [wl, "--watch", "--type", "text/plain;utf-8", "--no-newline"]
+    wrapper = "from betterclip.daemon import wayland_watch_tick; wayland_watch_tick()"
+    args = [wl, "--watch"]
     if primary:
         args.append("--primary")
     args.extend([sys.executable, "-c", wrapper])
@@ -95,7 +132,11 @@ def _wayland_run_watcher(primary: bool) -> subprocess.Popen | None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         pass_fds=(wfd,),
-        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        env={
+            **os.environ,
+            "PYTHONUNBUFFERED": "1",
+            "BETTERCLIP_WATCH_FD": str(wfd),
+        },
     )
     os.close(wfd)
 
@@ -114,8 +155,19 @@ def _wayland_run_watcher(primary: bool) -> subprocess.Popen | None:
                     payload = buf[4 : 4 + sz]
                     buf = buf[4 + sz :]
                     try:
-                        text = payload.decode("utf-8", errors="replace")
-                        _on_new_clipboard_text(text)
+                        if len(payload) < 3:
+                            continue
+                        kind = payload[0]
+                        mime_len = struct.unpack(">H", payload[1:3])[0]
+                        if len(payload) < 3 + mime_len:
+                            continue
+                        mime = payload[3 : 3 + mime_len].decode("utf-8", errors="replace")
+                        data = payload[3 + mime_len :]
+                        _on_clipboard_payload(
+                            "image" if kind == 1 else "text",
+                            mime,
+                            data,
+                        )
                     except Exception:
                         pass
             except OSError:
@@ -162,20 +214,6 @@ def _x11_run_watcher() -> None:
     ext_reply = disp.query_extension("XFIXES")
     sel_notify_type = ext_reply.first_event + xfixes.XFixesSelectionNotify
 
-    def read_clipboard() -> str | None:
-        path, read_args, _ = clip_tool
-        try:
-            r = subprocess.run(
-                [path] + read_args,
-                capture_output=True,
-                timeout=SUBPROCESS_TIMEOUT,
-            )
-            if r.returncode == 0 and r.stdout:
-                return r.stdout.decode("utf-8", errors="replace")
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
-            pass
-        return None
-
     while True:
         try:
             ev = disp.next_event()
@@ -186,9 +224,7 @@ def _x11_run_watcher() -> None:
             sys.exit(1)
         if ev.type != sel_notify_type or ev.selection != atom_clipboard:
             continue
-        text = read_clipboard()
-        if text:
-            _on_new_clipboard_text(text)
+        _on_new_clipboard()
 
 
 _SESSION_ENV_KEYS = (

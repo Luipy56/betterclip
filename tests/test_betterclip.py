@@ -123,6 +123,69 @@ class TestStorage(unittest.TestCase):
         self.assertEqual(hist[0]["text"], "hello")
         self.assertIn("timestamp", hist[0])
 
+    def test_add_image_entry(self):
+        import hashlib
+        import struct
+
+        from betterclip.storage import add_image_entry, load_history, resolve_image_path
+
+        data = (
+            b"\x89PNG\r\n\x1a\n"
+            + struct.pack(">I", 13)
+            + b"IHDR"
+            + struct.pack(">IIBBBBB", 1920, 1080, 8, 2, 0, 0, 0)
+            + b"\x00\x00\x00\x00"
+        )
+        add_image_entry(data, "image/png")
+        hist = load_history()
+        self.assertEqual(len(hist), 1)
+        entry = hist[0]
+        self.assertEqual(entry["kind"], "image")
+        self.assertEqual(entry["mime"], "image/png")
+        self.assertEqual(entry["width"], 1920)
+        self.assertEqual(entry["height"], 1080)
+        self.assertEqual(entry["bytes"], len(data))
+        sha = hashlib.sha256(data).hexdigest()
+        self.assertEqual(entry["sha256"], sha)
+        self.assertEqual(entry["path"], f"images/{sha}.png")
+        path = resolve_image_path(entry["path"])
+        self.assertTrue(path.is_file())
+        self.assertEqual(path.read_bytes(), data)
+
+    def test_add_image_entry_dedup_consecutive(self):
+        from betterclip.storage import add_image_entry, load_history
+
+        data = b"\x89PNG\r\n\x1a\n" + b"same"
+        add_image_entry(data, "image/png")
+        add_image_entry(data, "image/png")
+        self.assertEqual(len(load_history()), 1)
+
+    def test_image_eviction_deletes_blob(self):
+        from betterclip.storage import add_entry, add_image_entry, load_history, resolve_image_path
+
+        self.config_patcher.stop()
+        self.config_patcher = patch("betterclip.storage.load_config", return_value={"max_items": 2})
+        self.config_patcher.start()
+
+        data = b"\x89PNG\r\n\x1a\n" + b"drop-me"
+        add_image_entry(data, "image/png")
+        rel = load_history()[0]["path"]
+        blob = resolve_image_path(rel)
+        self.assertTrue(blob.is_file())
+        add_entry("a")
+        add_entry("b")
+        hist = load_history()
+        self.assertEqual(len(hist), 2)
+        self.assertEqual([e.get("text") for e in hist], ["a", "b"])
+        self.assertFalse(blob.exists())
+
+    def test_add_image_entry_skips_oversized(self):
+        from betterclip.storage import add_image_entry, load_history
+        from betterclip.utils import IMAGE_MAX_BYTES
+
+        add_image_entry(b"x" * (IMAGE_MAX_BYTES + 1), "image/png")
+        self.assertEqual(load_history(), [])
+
     def test_add_entry_dedup_consecutive(self):
         from betterclip.storage import add_entry, load_history
 
@@ -202,6 +265,114 @@ class TestClipboard(unittest.TestCase):
             with patch.dict(os.environ, env):
                 self.assertFalse(is_wayland())
 
+    def test_first_image_mime_and_sniff(self):
+        import struct
+
+        from betterclip.clipboard import first_image_mime, image_dimensions, sniff_image_mime
+
+        self.assertEqual(
+            first_image_mime(["TIMESTAMP", "text/plain", "image/png"]),
+            "image/png",
+        )
+        self.assertEqual(first_image_mime(["image/jpg"]), "image/jpeg")
+        self.assertIsNone(first_image_mime(["text/plain"]))
+        png = b"\x89PNG\r\n\x1a\n"
+        self.assertEqual(sniff_image_mime(png), "image/png")
+        self.assertEqual(sniff_image_mime(b"\xff\xd8\xff\xe0"), "image/jpeg")
+        webp = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"xxxx"
+        self.assertEqual(sniff_image_mime(webp), "image/webp")
+        self.assertIsNone(sniff_image_mime(b"hello"))
+        png_ihdr = (
+            b"\x89PNG\r\n\x1a\n"
+            + struct.pack(">I", 13)
+            + b"IHDR"
+            + struct.pack(">IIBBBBB", 800, 600, 8, 2, 0, 0, 0)
+        )
+        self.assertEqual(image_dimensions(png_ihdr), (800, 600))
+        self.assertIsNone(image_dimensions(b"hello"))
+
+    def test_list_clipboard_types_wayland(self):
+        from unittest.mock import MagicMock
+
+        from betterclip.clipboard import list_clipboard_types
+
+        mock_run = MagicMock()
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = b"text/plain\nimage/png\n"
+        with patch("betterclip.clipboard.is_wayland", return_value=True):
+            with patch("betterclip.clipboard.find_executable", return_value="/usr/bin/wl-paste"):
+                with patch("subprocess.run", mock_run):
+                    types = list_clipboard_types()
+        self.assertEqual(types, ["text/plain", "image/png"])
+        self.assertEqual(mock_run.call_args[0][0][:2], ["/usr/bin/wl-paste", "-l"])
+
+    def test_list_clipboard_types_x11_needs_xclip(self):
+        from betterclip.clipboard import list_clipboard_types
+
+        with patch("betterclip.clipboard.is_wayland", return_value=False):
+            with patch("betterclip.clipboard.find_executable", return_value=None):
+                self.assertEqual(list_clipboard_types(), [])
+
+    def test_read_and_write_clipboard_image_mocked(self):
+        from unittest.mock import MagicMock
+
+        from betterclip.clipboard import read_clipboard_image, write_clipboard_image
+
+        png = b"\x89PNG\r\n\x1a\n" + b"data"
+        list_run = MagicMock()
+        list_run.return_value.returncode = 0
+        list_run.return_value.stdout = b"image/png\ntext/plain\n"
+        paste_run = MagicMock()
+        paste_run.return_value.returncode = 0
+        paste_run.return_value.stdout = png
+
+        def run_side_effect(args, **kwargs):
+            if "-l" in args:
+                return list_run.return_value
+            return paste_run.return_value
+
+        with patch("betterclip.clipboard.is_wayland", return_value=True):
+            with patch("betterclip.clipboard.find_executable", return_value="/usr/bin/wl-paste"):
+                with patch("subprocess.run", side_effect=run_side_effect):
+                    got = read_clipboard_image()
+        self.assertEqual(got, (png, "image/png"))
+
+        copy_run = MagicMock()
+        copy_run.return_value = MagicMock()
+        with patch("betterclip.clipboard.is_wayland", return_value=True):
+            with patch("betterclip.clipboard.find_executable", return_value="/usr/bin/wl-copy"):
+                with patch("subprocess.run", copy_run):
+                    self.assertTrue(write_clipboard_image(png, "image/png"))
+                    self.assertFalse(write_clipboard_image(b"", "image/png"))
+        self.assertEqual(copy_run.call_args[0][0], ["/usr/bin/wl-copy", "-t", "image/png"])
+        self.assertEqual(copy_run.call_args.kwargs.get("input"), png)
+
+    def test_read_clipboard_accepts_charset_utf8_mime(self):
+        """GNOME/XWayland often offers text/plain;charset=utf-8, not ;utf-8."""
+        from unittest.mock import MagicMock
+
+        from betterclip.clipboard import read_clipboard
+
+        def run_side_effect(args, **kwargs):
+            r = MagicMock()
+            if "-l" in args:
+                r.returncode = 0
+                r.stdout = b"text/plain;charset=utf-8\nUTF8_STRING\nTARGETS\n"
+                return r
+            if any("charset=utf-8" in str(a) for a in args):
+                r.returncode = 0
+                r.stdout = b"hola gnome"
+                return r
+            r.returncode = 1
+            r.stdout = b""
+            return r
+
+        with patch("betterclip.clipboard.is_wayland", return_value=True):
+            with patch("betterclip.clipboard.find_executable", return_value="/usr/bin/wl-paste"):
+                with patch("betterclip.clipboard._read_text_x11", return_value=None):
+                    with patch("subprocess.run", side_effect=run_side_effect):
+                        self.assertEqual(read_clipboard(), "hola gnome")
+
 
 class TestPicker(unittest.TestCase):
     """Test picker module (no rofi subprocess)."""
@@ -247,6 +418,19 @@ class TestPicker(unittest.TestCase):
         self.assertEqual(_format_stamp("not-a-date"), "--/--:--")
         line = _picker_line(2, {"text": "copied", "timestamp": ts})
         self.assertEqual(line, f"2\t[{expected}] copied")
+        image_line = _picker_line(
+            0,
+            {
+                "kind": "image",
+                "mime": "image/png",
+                "timestamp": ts,
+                "path": "images/abc.png",
+                "width": 1920,
+                "height": 1080,
+                "bytes": 245760,
+            },
+        )
+        self.assertEqual(image_line, f"0\t[{expected}] Imagen · PNG · 1920×1080 · 240 KB")
 
     def test_show_picker_with_mocked_rofi(self):
         """When rofi returns a selection, we get the full text back."""
@@ -265,10 +449,12 @@ class TestPicker(unittest.TestCase):
         with patch("betterclip.picker.find_executable", return_value="/usr/bin/rofi"):
             with patch("subprocess.Popen", return_value=mock_proc):
                 result = show_picker()
-        self.assertEqual(result, "second item")
+        self.assertEqual(result["text"], "second item")
         fed = mock_proc.communicate.call_args.kwargs.get("input")
         if fed is None:
             fed = mock_proc.communicate.call_args[0][0]
+        if isinstance(fed, bytes):
+            fed = fed.decode("utf-8")
         first = fed.split("\n", 1)[0]
         self.assertRegex(first, r"^0\t\[\d{2}/\d{2}:\d{2}\] second item$")
 
@@ -330,7 +516,7 @@ class TestPicker(unittest.TestCase):
         with patch("betterclip.picker.load_config", return_value={"cli_mode": True}):
             with patch("sys.stdin", StringIO("1\n")):
                 result = show_picker()
-        self.assertEqual(result, "first")
+        self.assertEqual(result["text"], "first")
 
 
 class TestRofiThemeAsset(unittest.TestCase):
@@ -436,6 +622,27 @@ class TestDaemonSessionEnv(unittest.TestCase):
 
         fake_proc.wait.assert_called_once()
         self.assertEqual(calls, ["fallback"])
+
+    def test_on_new_clipboard_prefers_image(self):
+        from unittest.mock import MagicMock
+
+        from betterclip import daemon as daemon_mod
+
+        png = b"\x89PNG\r\n\x1a\n" + b"shot"
+        added: list[tuple] = []
+
+        def fake_payload(kind, mime, data):
+            added.append((kind, mime, data))
+
+        with (
+            patch.object(daemon_mod, "_on_clipboard_payload", side_effect=fake_payload),
+            patch("betterclip.clipboard.read_clipboard_image", return_value=(png, "image/png")),
+            patch("betterclip.clipboard.read_clipboard", MagicMock()) as read_text,
+        ):
+            daemon_mod._on_new_clipboard()
+
+        self.assertEqual(added, [("image", "image/png", png)])
+        read_text.assert_not_called()
 
 
 class TestSystemdUnit(unittest.TestCase):

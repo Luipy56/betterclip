@@ -8,10 +8,10 @@ import sys
 import time
 from datetime import datetime, timezone
 
-from .clipboard import get_write_tool, is_wayland
+from .clipboard import get_write_tool, is_wayland, write_clipboard_image
 from .config import load_config
 from .rofi_theme import DEFAULT_THEME, rofi_scroll_method_args, rofi_theme_args
-from .storage import get_history_reversed
+from .storage import get_history_reversed, resolve_image_path
 from .utils import PICKER_MAX_LINES, PICKER_TRUNCATE_LEN, ROFI_TIMEOUT, find_executable
 
 # Modifier keysyms that GNOME may still hold while handling Super+V / Ctrl+Alt+V.
@@ -114,15 +114,89 @@ def _format_stamp(ts: str | None) -> str:
     return local.strftime("%d/%H:%M")
 
 
-def _picker_line(index: int, entry: dict) -> str:
-    preview = _truncate(entry.get("text", ""))
-    return f"{index}\t[{_format_stamp(entry.get('timestamp'))}] {preview}"
+def _format_bytes(n: int) -> str:
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.0f} KB"
+    return f"{n / (1024 * 1024):.1f} MB"
 
 
-def _show_cli_picker(max_lines: int = PICKER_MAX_LINES) -> str | None:
+def _image_dims(entry: dict) -> tuple[int, int] | None:
+    w, h = entry.get("width"), entry.get("height")
+    try:
+        if w and h:
+            return int(w), int(h)
+    except (TypeError, ValueError):
+        pass
+    rel = entry.get("path")
+    if not isinstance(rel, str) or not rel:
+        return None
+    path = resolve_image_path(rel)
+    if not path.is_file():
+        return None
+    try:
+        from .clipboard import image_dimensions
+
+        return image_dimensions(path.read_bytes())
+    except OSError:
+        return None
+
+
+def _image_byte_count(entry: dict) -> int | None:
+    raw = entry.get("bytes")
+    try:
+        if raw is not None:
+            n = int(raw)
+            if n >= 0:
+                return n
+    except (TypeError, ValueError):
+        pass
+    rel = entry.get("path")
+    if isinstance(rel, str) and rel:
+        try:
+            return resolve_image_path(rel).stat().st_size
+        except OSError:
+            return None
+    return None
+
+
+def _image_label(entry: dict) -> str:
+    mime = str(entry.get("mime") or "image/png")
+    subtype = mime.split("/", 1)[-1].upper()
+    if subtype == "JPEG":
+        subtype = "JPG"
+    parts = ["Imagen", subtype]
+    dims = _image_dims(entry)
+    if dims:
+        parts.append(f"{dims[0]}×{dims[1]}")
+    nbytes = _image_byte_count(entry)
+    if nbytes is not None:
+        parts.append(_format_bytes(nbytes))
+    return " · ".join(parts)
+
+
+def _picker_preview(entry: dict) -> str:
+    if entry.get("kind") == "image":
+        return _image_label(entry)
+    return _truncate(entry.get("text", ""))
+
+
+def _picker_line(index: int, entry: dict, *, with_icon: bool = False) -> str:
+    line = f"{index}\t[{_format_stamp(entry.get('timestamp'))}] {_picker_preview(entry)}"
+    if with_icon and entry.get("kind") == "image":
+        rel = entry.get("path")
+        if isinstance(rel, str) and rel:
+            abs_path = resolve_image_path(rel)
+            if abs_path.is_file():
+                return f"{line}\0icon\x1f{abs_path}"
+    return line
+
+
+def _show_cli_picker(max_lines: int = PICKER_MAX_LINES) -> dict | None:
     """
     Terminal picker: print numbered history to stderr, read index from stdin.
-    Returns the selected full text, or None if cancelled/invalid.
+    Returns the selected entry, or None if cancelled/invalid.
     """
     history = get_history_reversed()
     if not history:
@@ -136,16 +210,30 @@ def _show_cli_picker(max_lines: int = PICKER_MAX_LINES) -> str | None:
         line = sys.stdin.readline()
         idx = int(line.strip())
         if 0 <= idx < len(history):
-            return history[idx].get("text", "")
+            return history[idx]
     except (ValueError, EOFError):
         pass
     return None
 
 
-def show_picker(max_lines: int = PICKER_MAX_LINES) -> str | None:
+def _parse_picker_index(selected: str, history: list[dict]) -> dict | None:
+    selected = selected.strip()
+    if not selected:
+        return None
+    idx_str = selected.split("\t", 1)[0] if "\t" in selected else selected
+    try:
+        idx = int(idx_str)
+        if 0 <= idx < len(history):
+            return history[idx]
+    except ValueError:
+        pass
+    return None
+
+
+def show_picker(max_lines: int = PICKER_MAX_LINES) -> dict | None:
     """
     Show picker with clipboard history (rofi on desktop, terminal list in cli_mode).
-    Returns the selected full text, or None if cancelled.
+    Returns the selected history entry, or None if cancelled.
     """
     config = load_config(use_cache=False)
     if config.get("cli_mode"):
@@ -160,7 +248,8 @@ def show_picker(max_lines: int = PICKER_MAX_LINES) -> str | None:
     if not history:
         return None
 
-    lines = [_picker_line(i, ent) for i, ent in enumerate(history)]
+    has_image = any(ent.get("kind") == "image" for ent in history)
+    lines = [_picker_line(i, ent, with_icon=has_image) for i, ent in enumerate(history)]
 
     theme = config.get("theme", DEFAULT_THEME)
     rofi_args = [rofi, "-dmenu", *rofi_theme_args(theme), *rofi_scroll_method_args(theme)]
@@ -179,44 +268,56 @@ def show_picker(max_lines: int = PICKER_MAX_LINES) -> str | None:
             "-i",
         ]
     )
+    if has_image:
+        rofi_args.append("-show-icons")
 
     # Release Super/Ctrl/Alt before mapping rofi (shortcut grab otherwise steals focus).
     _wait_for_shortcut_modifiers_release()
 
+    fed = "\n".join(lines).encode("utf-8")
     try:
         proc = subprocess.Popen(
             rofi_args,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            text=True,
             env=_rofi_env(),
         )
-        out, _ = proc.communicate(input="\n".join(lines), timeout=ROFI_TIMEOUT)
+        out, _ = proc.communicate(input=fed, timeout=ROFI_TIMEOUT)
     except (subprocess.TimeoutExpired, subprocess.SubprocessError):
         return None
 
-    selected = out.strip() if out else ""
-    if not selected:
-        return None
-
-    idx_str = selected.split("\t", 1)[0] if "\t" in selected else selected
-    try:
-        idx = int(idx_str)
-        if 0 <= idx < len(history):
-            return history[idx].get("text", "")
-    except ValueError:
-        pass
-
-    return None
+    selected = ""
+    if out:
+        selected = out.decode("utf-8", errors="replace") if isinstance(out, (bytes, bytearray)) else str(out)
+    return _parse_picker_index(selected, history)
 
 
 def run_picker() -> bool:
-    """Show picker and write selected text to clipboard. Returns True if user selected."""
+    """Show picker and write the selection to the clipboard. Returns True if user selected."""
     config = load_config(use_cache=False)
     cli_mode = config.get("cli_mode", False)
 
-    text = show_picker()
+    entry = show_picker()
+    if not entry:
+        return False
+
+    if entry.get("kind") == "image":
+        rel = entry.get("path")
+        mime = str(entry.get("mime") or "image/png")
+        path = resolve_image_path(rel) if isinstance(rel, str) and rel else None
+        if cli_mode and path is not None:
+            print(str(path), end="")
+        if path is None or not path.is_file():
+            return bool(cli_mode)
+        try:
+            data = path.read_bytes()
+        except OSError:
+            return bool(cli_mode)
+        ok = write_clipboard_image(data, mime)
+        return True if cli_mode else ok
+
+    text = entry.get("text", "")
     if not text:
         return False
 

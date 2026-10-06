@@ -5,7 +5,12 @@ from __future__ import annotations
 import shutil
 # Subprocess timeouts (seconds)
 SUBPROCESS_TIMEOUT = 2
+IMAGE_SUBPROCESS_TIMEOUT = 10
 ROFI_TIMEOUT = 30
+
+# Clipboard images (screenshots, copy-image)
+IMAGE_MAX_BYTES = 20 * 1024 * 1024
+IMAGE_MIMES = ("image/png", "image/jpeg", "image/webp")
 
 # Picker display
 PICKER_MAX_LINES = 15
