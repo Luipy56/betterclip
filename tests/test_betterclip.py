@@ -221,6 +221,35 @@ class TestStorage(unittest.TestCase):
         hist = load_history()
         self.assertEqual(len(hist), 0)
 
+    def test_self_write_ignore_matches_once(self):
+        from betterclip.storage import mark_self_write, take_self_write_ignore
+
+        payload = b"selected line"
+        mark_self_write("text", payload)
+        self.assertTrue(take_self_write_ignore("text", payload))
+        # Consumed: a second identical capture must not be ignored.
+        self.assertFalse(take_self_write_ignore("text", payload))
+
+    def test_self_write_ignore_leaves_marker_on_mismatch(self):
+        from betterclip.storage import mark_self_write, take_self_write_ignore
+
+        mark_self_write("text", b"from-picker")
+        self.assertFalse(take_self_write_ignore("text", b"other-event"))
+        self.assertTrue(take_self_write_ignore("text", b"from-picker"))
+
+    def test_self_write_ignore_expires(self):
+        import json
+
+        from betterclip import storage as storage_mod
+        from betterclip.storage import mark_self_write, take_self_write_ignore
+
+        mark_self_write("text", b"stale")
+        path = storage_mod._self_write_path()
+        marker = json.loads(path.read_text(encoding="utf-8"))
+        marker["ts"] = marker["ts"] - storage_mod._SELF_WRITE_TTL_S - 1
+        path.write_text(json.dumps(marker), encoding="utf-8")
+        self.assertFalse(take_self_write_ignore("text", b"stale"))
+
 
 class TestUtils(unittest.TestCase):
     """Test utils module."""
@@ -502,6 +531,42 @@ class TestPicker(unittest.TestCase):
         self.assertEqual(argv[argv.index("-scroll-method") + 1], "0")
         self.assertIn("-normal-window", argv)
         self.assertIn("-steal-focus", argv)
+        self.assertIn("-click-to-exit", argv)
+
+    def test_terminate_rofi_on_focus_loss_after_focus(self):
+        """Once rofi had focus, leaving it cancels the picker (like Esc)."""
+        from unittest.mock import MagicMock
+
+        from betterclip import picker as picker_mod
+
+        proc = MagicMock()
+        # Alive until terminate; poll sequence driven by focus checks.
+        alive = {"n": 0}
+
+        def poll():
+            return None if alive["n"] < 10 else 0
+
+        proc.poll.side_effect = poll
+        proc.pid = 4242
+
+        focus_seq = [True, True, False]
+
+        def fake_active(_dpy, _root, pid):
+            self.assertEqual(pid, 4242)
+            alive["n"] += 1
+            if focus_seq:
+                return focus_seq.pop(0)
+            return False
+
+        with patch.object(picker_mod, "_x11_active_window_is_pid", side_effect=fake_active):
+            with patch.object(picker_mod, "_FOCUS_POLL_S", 0):
+                with patch.dict("sys.modules", {"Xlib": MagicMock(), "Xlib.display": MagicMock()}):
+                    import sys
+
+                    sys.modules["Xlib"].display.Display.return_value = MagicMock()
+                    picker_mod._terminate_rofi_on_focus_loss(proc)
+
+        proc.terminate.assert_called_once()
 
     def test_show_picker_cli_mode_returns_selection(self):
         """When cli_mode is True, selection comes from stdin (no rofi)."""
@@ -643,6 +708,57 @@ class TestDaemonSessionEnv(unittest.TestCase):
 
         self.assertEqual(added, [("image", "image/png", png)])
         read_text.assert_not_called()
+
+    def test_on_clipboard_payload_ignores_picker_self_write(self):
+        """Reselecting in Super+V must not append the line again."""
+        from betterclip import daemon as daemon_mod
+        from betterclip.storage import add_entry, load_history, mark_self_write
+
+        tmp = tempfile.mkdtemp()
+        try:
+            with patch("betterclip.config.Path.home", return_value=Path(tmp)):
+                with patch("betterclip.storage.load_config", return_value={"max_items": 50}):
+                    add_entry("older")
+                    add_entry("newer")
+                    mark_self_write("text", b"older")
+                    daemon_mod._on_clipboard_payload("text", "text/plain", b"older")
+                    hist = load_history()
+                    self.assertEqual([e.get("text") for e in hist], ["older", "newer"])
+                    # A real copy of the same text after the marker is gone is recorded.
+                    daemon_mod._on_clipboard_payload("text", "text/plain", b"older")
+                    hist = load_history()
+                    self.assertEqual([e.get("text") for e in hist], ["older", "newer", "older"])
+        finally:
+            import shutil
+
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_run_picker_marks_self_write_before_clipboard(self):
+        from unittest.mock import MagicMock
+
+        from betterclip import picker as picker_mod
+        from betterclip.storage import take_self_write_ignore
+
+        tmp = tempfile.mkdtemp()
+        try:
+            with patch("betterclip.config.Path.home", return_value=Path(tmp)):
+                with patch.object(
+                    picker_mod,
+                    "show_picker",
+                    return_value={"text": "from history", "timestamp": "2026-01-01T00:00:00Z"},
+                ):
+                    with patch.object(picker_mod, "load_config", return_value={"cli_mode": False}):
+                        with patch.object(
+                            picker_mod, "get_write_tool", return_value=("/bin/true", [])
+                        ):
+                            with patch("subprocess.run", MagicMock()) as run:
+                                self.assertTrue(picker_mod.run_picker())
+                                run.assert_called_once()
+                self.assertTrue(take_self_write_ignore("text", b"from history"))
+        finally:
+            import shutil
+
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 class TestSystemdUnit(unittest.TestCase):

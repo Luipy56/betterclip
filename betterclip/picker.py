@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -23,6 +24,9 @@ _SHORTCUT_MODIFIER_KEYSYMS = (
     "Control_L",
     "Control_R",
 )
+
+# How often to poll _NET_ACTIVE_WINDOW while the normal-window picker is open.
+_FOCUS_POLL_S = 0.05
 
 
 def _rofi_env() -> dict[str, str]:
@@ -87,6 +91,69 @@ def _wait_for_shortcut_modifiers_release(timeout: float = 1.0) -> None:
         if not any(keymap[kc // 8] & (1 << (kc % 8)) for kc in keycodes):
             return
         time.sleep(0.02)
+
+
+def _x11_active_window_is_pid(dpy, root, pid: int) -> bool | None:
+    """
+    True if _NET_ACTIVE_WINDOW belongs to pid, False if another client, None if unknown.
+    """
+    try:
+        from Xlib import X
+    except ImportError:
+        return None
+
+    try:
+        net_active = dpy.intern_atom("_NET_ACTIVE_WINDOW")
+        net_wm_pid = dpy.intern_atom("_NET_WM_PID")
+        prop = root.get_full_property(net_active, X.AnyPropertyType)
+        if not prop or not prop.value:
+            return None
+        wid = int(prop.value[0])
+        if wid == 0:
+            return None
+        win = dpy.create_resource_object("window", wid)
+        pid_prop = win.get_full_property(net_wm_pid, X.AnyPropertyType)
+        if pid_prop and pid_prop.value:
+            return int(pid_prop.value[0]) == pid
+        cls = win.get_wm_class()
+        if cls and any(str(c).lower() == "rofi" for c in cls):
+            # No PID atom; treat any rofi window as ours while the picker runs.
+            return True
+    except Exception:
+        return None
+    return False
+
+
+def _terminate_rofi_on_focus_loss(proc: subprocess.Popen) -> None:
+    """
+    Cancel the picker when a -normal-window rofi loses focus (click outside, Alt-Tab).
+
+    Overlay-style rofi uses -click-to-exit; GNOME/XWayland needs -normal-window for
+    keyboard focus, and that mode does not dismiss on outside click by itself.
+    """
+    try:
+        from Xlib import display
+    except ImportError:
+        return
+
+    try:
+        dpy = display.Display()
+    except Exception:
+        return
+
+    root = dpy.screen().root
+    saw_focus = False
+    while proc.poll() is None:
+        state = _x11_active_window_is_pid(dpy, root, proc.pid)
+        if state is True:
+            saw_focus = True
+        elif saw_focus and state is False:
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+            return
+        time.sleep(_FOCUS_POLL_S)
 
 
 def _truncate(text: str, max_len: int = PICKER_TRUNCATE_LEN) -> str:
@@ -256,11 +323,14 @@ def show_picker(max_lines: int = PICKER_MAX_LINES) -> dict | None:
     # GNOME Wayland: _rofi_env() forces XWayland (rofi 2.x needs layer-shell).
     # Both -normal-window and -steal-focus are required so keyboard focus works
     # without an extra click after Super+V (including modern_mac).
-    if is_wayland():
+    use_normal_window = is_wayland()
+    if use_normal_window:
         rofi_args.append("-normal-window")
     rofi_args.extend(
         [
             "-steal-focus",
+            # Outside click cancels like Escape (X11 overlay; also set for clarity).
+            "-click-to-exit",
             "-p",
             "Portapapeles (Super+V)",
             "-l",
@@ -283,6 +353,12 @@ def show_picker(max_lines: int = PICKER_MAX_LINES) -> dict | None:
             stderr=subprocess.DEVNULL,
             env=_rofi_env(),
         )
+        if use_normal_window:
+            threading.Thread(
+                target=_terminate_rofi_on_focus_loss,
+                args=(proc,),
+                daemon=True,
+            ).start()
         out, _ = proc.communicate(input=fed, timeout=ROFI_TIMEOUT)
     except (subprocess.TimeoutExpired, subprocess.SubprocessError):
         return None
@@ -295,6 +371,8 @@ def show_picker(max_lines: int = PICKER_MAX_LINES) -> dict | None:
 
 def run_picker() -> bool:
     """Show picker and write the selection to the clipboard. Returns True if user selected."""
+    from .storage import mark_self_write
+
     config = load_config(use_cache=False)
     cli_mode = config.get("cli_mode", False)
 
@@ -314,6 +392,8 @@ def run_picker() -> bool:
             data = path.read_bytes()
         except OSError:
             return bool(cli_mode)
+        # Daemon must not treat this re-selection as a new copy.
+        mark_self_write("image", data)
         ok = write_clipboard_image(data, mime)
         return True if cli_mode else ok
 
@@ -331,6 +411,9 @@ def run_picker() -> bool:
             sys.stderr.write("betterclip: No clipboard write tool (wl-copy/xsel/xclip).\n")
             return False
         return True  # CLI mode: selection already printed to stdout
+
+    # Fingerprint matches daemon stripping; ignore the ensuing CLIPBOARD event.
+    mark_self_write("text", text.strip().encode("utf-8"))
 
     exe, args = tool
     try:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,6 +17,11 @@ _IMAGE_EXT = {
     "image/jpeg": ".jpg",
     "image/webp": ".webp",
 }
+
+# Picker re-writes CLIPBOARD so the user can paste; the daemon must not treat
+# that as a fresh Ctrl+C. Marker TTL covers XFixes/wl-paste latency.
+_SELF_WRITE_TTL_S = 5.0
+_SELF_WRITE_NAME = "self_write.json"
 
 
 def _ensure_data_dir() -> Path:
@@ -31,6 +37,68 @@ def _utc_now() -> str:
 def resolve_image_path(rel: str) -> Path:
     """Absolute path for a history-relative image blob."""
     return get_data_dir() / rel
+
+
+def _self_write_path() -> Path:
+    return get_data_dir() / _SELF_WRITE_NAME
+
+
+def mark_self_write(kind: str, data: bytes) -> None:
+    """
+    Announce that betterclip itself is about to write CLIPBOARD.
+
+    The daemon will ignore one matching capture within _SELF_WRITE_TTL_S.
+    """
+    if kind not in ("text", "image") or not data:
+        return
+    path = _self_write_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "kind": kind,
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "ts": time.time(),
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def take_self_write_ignore(kind: str, data: bytes) -> bool:
+    """
+    Return True if this clipboard payload is our own picker write (and clear it).
+
+    Mismatched events leave the marker in place so a later matching capture
+    (the real picker write) can still be ignored. Stale markers are dropped.
+    """
+    if kind not in ("text", "image") or not data:
+        return False
+    path = _self_write_path()
+    try:
+        raw = path.read_text(encoding="utf-8")
+        marker = json.loads(raw)
+    except (OSError, json.JSONDecodeError, TypeError):
+        return False
+
+    def _clear() -> None:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    if not isinstance(marker, dict):
+        _clear()
+        return False
+    try:
+        ts = float(marker.get("ts", 0))
+    except (TypeError, ValueError):
+        _clear()
+        return False
+    if time.time() - ts > _SELF_WRITE_TTL_S:
+        _clear()
+        return False
+    digest = hashlib.sha256(data).hexdigest()
+    if marker.get("kind") != kind or marker.get("sha256") != digest:
+        return False
+    _clear()
+    return True
 
 
 def load_history() -> list[dict]:

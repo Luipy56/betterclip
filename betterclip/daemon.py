@@ -14,14 +14,20 @@ from .utils import X11_CLIPBOARD_TOOLS, find_executable, find_x11_tool
 
 
 def _on_clipboard_payload(kind: str, mime: str, data: bytes) -> None:
-    from .storage import add_entry, add_image_entry
+    from .storage import add_entry, add_image_entry, take_self_write_ignore
 
     if kind == "image":
+        if take_self_write_ignore("image", data):
+            return
         add_image_entry(data, mime)
         return
     text = data.decode("utf-8", errors="replace").strip()
-    if text:
-        add_entry(text)
+    if not text:
+        return
+    # Match the fingerprint the picker stored (stripped UTF-8).
+    if take_self_write_ignore("text", text.encode("utf-8")):
+        return
+    add_entry(text)
 
 
 def _on_new_clipboard() -> None:
